@@ -1,0 +1,10 @@
+numpy
+polars
+pyreadstat
+wordcloud
+spacy
+matplotlib
+ipfn
+pptx
+thefuzz
+xlsxwriter

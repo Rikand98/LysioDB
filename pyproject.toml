@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "RikardDB"
+version = "0.1"
+dependencies = [
+  "numpy",
+  "polars",
+  "pyreadstat",
+  "wordcloud",
+  "spacy",
+  "matplotlib",
+  "ipfn",
+  "pptx",
+  "thefuzz",
+  "xlsxwriter",
+]
