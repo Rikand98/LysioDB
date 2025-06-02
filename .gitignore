@@ -1,0 +1,58 @@
+# Byte-code files
+*.pyc
+*.pyd
+*.pyo
+__pycache__/
+
+# Distribution / packaging
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+bin/
+lib/
+include/
+share/
+pip-log.txt
+pip-delete-this-arg.txt
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Environments
+.env
+.venv
+# For PyInstaller
+*.spec
+
+# Editors
+.idea/ # PyCharm / IntelliJ IDEA
+.vscode/ # VS Code
+*.sublime-project
+*.sublime-workspace
+
+# OS generated files
+.DS_Store # macOS
+.Trashes # macOS
+Thumbs.db # Windows
+ehthumbs.db # Windows
+Desktop.ini # Windows
+
+# Jupyter Notebook files
+.ipynb_checkpoints
+
+# Miscellaneous
+logs/
+*.log
+*.sqlite3
+.coverage
+.pytest_cache/
+htmlcov/
+.nox/
+.mypy_cache/
+.ruff_cache/
+.ruff_cache
+.blackd/
