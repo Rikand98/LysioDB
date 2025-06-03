@@ -870,7 +870,7 @@ class Calculations:
 
         return ranking_category_dfs
 
-    def index(self, weight=None, target_scale=None, correlate=None):
+    def index(self, weight=None, scale=None, correlate=None):
         """
         Calculates index scores using vectorized Polars operations.
         Handles overall index, category-based index, and optional scaling.
@@ -1045,36 +1045,83 @@ class Calculations:
                 )
                 continue
 
-            if target_scale and len(target_scale) == 2:
-                target_min, target_max = target_scale
-                melted_df = melted_df.with_columns(
-                    [
-                        pl.col("Value").min().over("Question").alias("original_min"),
-                        pl.col("Value").max().over("Question").alias("original_max"),
-                    ]
+            if scale and len(scale) == 2:
+                question_meta_ranges = []
+                relevant_questions_df = self.database.question_df.filter(
+                    pl.col("questions").is_in(questions_present)
                 )
+                for row in relevant_questions_df.iter_rows(named=True):
+                    q_name = row["questions"]
+                    value_labels_info = row["value_labels_info"]
 
-                melted_df = (
-                    melted_df.with_columns(
-                        pl.when(pl.col("original_max") > pl.col("original_min"))
-                        .then(
-                            (pl.col("Value") - pl.col("original_min"))
-                            * (
-                                (target_max - target_min)
-                                / (pl.col("original_max") - pl.col("original_min"))
+                    if value_labels_info and isinstance(value_labels_info, dict):
+                        numeric_values = []
+                        for key in value_labels_info.keys():
+                            try:
+                                value = float(key)
+                                if value not in self.database.config.NAN_VALUES:
+                                    numeric_values.append(value)
+                            except (ValueError, TypeError):
+                                continue
+
+                        if numeric_values:
+                            question_meta_ranges.append(
+                                {
+                                    "Question": q_name,
+                                    "meta_original_min": min(numeric_values),
+                                    "meta_original_max": max(numeric_values),
+                                }
                             )
-                            + target_min
+                        else:
+                            print(
+                                f"Warning: No numeric value labels found in value_labels_info for question '{q_name}'. Skipping its scaling metadata."
+                            )
+                    else:
+                        print(
+                            f"Warning: No valid value_labels_info (or not a dict) found for question '{q_name}'. Skipping its scaling metadata."
                         )
-                        .when(pl.col("original_min") != target_min)
-                        .then(pl.lit(target_min))
-                        .otherwise(pl.col("Value"))
-                        .alias("Value_scaled")
-                    )
-                    .drop(["original_min", "original_max"])
-                    .rename({"Value_scaled": "Value"})
-                )
 
-                melted_df = melted_df.with_columns(pl.col("Value"))
+                question_meta_ranges_df = pl.DataFrame(
+                    question_meta_ranges,
+                    schema={
+                        "Question": pl.Utf8,
+                        "meta_original_min": pl.Float64,
+                        "meta_original_max": pl.Float64,
+                    },
+                )
+                melted_df = melted_df.join(
+                    question_meta_ranges_df, on="Question", how="left"
+                )
+                if "meta_original_min" not in melted_df.columns:
+                    print(
+                        "Error: Could not join metadata ranges for scaling. Skipping scaling."
+                    )
+                else:
+                    target_min, target_max = scale
+                    melted_df = (
+                        melted_df.with_columns(
+                            pl.when(
+                                pl.col("meta_original_max")
+                                > pl.col("meta_original_min")
+                            )
+                            .then(
+                                (pl.col("Value") - pl.col("meta_original_min"))
+                                * (
+                                    (target_max - target_min)
+                                    / (
+                                        pl.col("meta_original_max")
+                                        - pl.col("meta_original_min")
+                                    )
+                                )
+                                + target_min
+                            )
+                            .otherwise(pl.col("Value"))
+                            .alias("Value_scaled")
+                        )
+                        .drop(["meta_original_min", "meta_original_max", "Value"])
+                        .rename({"Value_scaled": "Value"})
+                    )
+                    melted_df = melted_df.with_columns(pl.col("Value").cast(pl.Float64))
 
             individual_question_index_df = (
                 melted_df.group_by(["Category", "Question", "Frågeområde", "Nan_Count"])
@@ -1111,23 +1158,13 @@ class Calculations:
                 area_index_expr = pl.col("Value").mean()
 
             area_index_df = (
-                melted_df.group_by(
-                    ["Category", "Frågeområde", "Nan_Count", "Individual_Index"]
-                )
+                melted_df.group_by(["Category", "Frågeområde"])
                 .agg(
                     [
                         area_index_expr.alias("Area_Index"),
                     ]
                 )
-                .with_columns(
-                    pl.when(pl.col("Individual_Index").is_null())
-                    .then(pl.lit(None))
-                    .otherwise(pl.col("Area_Index"))
-                    .alias("Area_Index")
-                    .cast(pl.Float64)
-                )
-                .drop("Nan_Count")
-                .drop("Individual_Index")
+                .with_columns(pl.col("Area_Index").alias("Area_Index").cast(pl.Float64))
             )
 
             final_category_df = individual_question_index_df.join(

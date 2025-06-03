@@ -62,6 +62,7 @@ class Transform:
                 right_on=background_token,
                 how="left",
             )
+            print(database_df)
 
             if background_meta is not None:
                 database_meta.column_names_to_labels.update(
@@ -87,17 +88,18 @@ class Transform:
                 database_meta.readstat_variable_types.update(
                     background_meta.readstat_variable_types
                 )
-                pystat.write_sav(
-                    database_df.to_pandas(),
-                    path,
-                    column_labels=database_meta.column_names_to_labels,
-                    variable_value_labels=database_meta.variable_value_labels,
-                )
 
             else:
                 print(
                     "No detailed metadata available from the loaded file type (e.g., Excel). Metadata was not updated from the file."
                 )
+
+            pystat.write_sav(
+                database_df.to_pandas(),
+                path,
+                column_labels=database_meta.column_names_to_labels,
+                variable_value_labels=database_meta.variable_value_labels,
+            )
 
             print("Background data loading and merging process completed.")
 
