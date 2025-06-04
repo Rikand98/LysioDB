@@ -997,6 +997,7 @@ class Calculations:
                 .with_columns(pl.lit(category_column).alias("Category"))
                 .drop(category_column)
             )
+            print(df_category_filtered)
             nan_flag_cols = [
                 col
                 for col in df_category_filtered.columns
@@ -1122,7 +1123,6 @@ class Calculations:
                         .rename({"Value_scaled": "Value"})
                     )
                     melted_df = melted_df.with_columns(pl.col("Value").cast(pl.Float64))
-
             individual_question_index_df = (
                 melted_df.group_by(["Category", "Question", "Frågeområde", "Nan_Count"])
                 .agg(
