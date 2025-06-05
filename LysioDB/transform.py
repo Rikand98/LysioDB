@@ -1,4 +1,3 @@
-import pandas as pd
 import polars as pl
 import pyreadstat as pystat
 import re
@@ -348,11 +347,11 @@ class Transform:
 
             merged_dfs.append(df)
 
-        df_combined = pd.concat(merged_dfs, ignore_index=True)
+        df_combined = pl.concat(merged_dfs, ignore_index=True)
         self.database.df = df_combined
         return df_combined
 
-    def map_2(self, old_df_paths: list) -> pd.DataFrame:
+    def map_2(self, old_df_paths: list) -> pl.DataFrame:
         """Standardizes old datasets and merges them."""
         print("\n--- Start mapping and renaming of data ---")
         base_questions = self.database.meta.column_names_to_labels
@@ -371,10 +370,10 @@ class Transform:
             merged_dfs.append(df)
 
         print("\n--- Finished ---")
-        return pd.concat(merged_dfs, ignore_index=True)
+        return pl.concat(merged_dfs, ignore_index=True)
 
     def _get_question_mapping(
-        self, df: pd.DataFrame, meta, base_questions: dict
+        self, df: pl.DataFrame, meta, base_questions: dict
     ) -> dict:
         """Maps old columns to new base columns using question labels."""
 

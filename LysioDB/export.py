@@ -1,4 +1,3 @@
-import pandas as pd
 import polars as pl
 import pyreadstat as pystat
 import matplotlib.pyplot as plt
@@ -140,47 +139,74 @@ class Export:
 
         print(f"Database exported to: {file_path}")
 
-    def raw_data(self, output_file="raw_data.xlsx"):
-        """Export raw data to Excel, ensuring consistent sorting and excluding 'direct' category columns."""
+    def raw_data(self, output_file: str = "raw_data.xlsx"):
+        """
+        Export raw data to Excel, ensuring consistent sorting and excluding 'direct' category columns.
+        Generates two sheets: 'Numeric Data' (raw values) and 'Labeled Data' (with value labels applied).
+        Also calls _generate_codebook to add a 'Codebook' sheet.
+        """
+        print("\n--- Exporting Raw Data to Excel ---")
 
-        direct_columns = {
+        direct_columns_to_drop = {
             category
             for category, config in self.database.config.category_map.items()
             if config.get("type") == "direct"
         }
 
         filtered_df = self.database.df.drop(
-            columns=[col for col in direct_columns if col in self.database.df.columns]
+            [col for col in direct_columns_to_drop if col in self.database.df.columns]
         )
 
-        with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
-            filtered_df.to_excel(writer, sheet_name="Numeric Data", index=False)
-
-            labeled_df = filtered_df.copy()
-            for var, labels in self.database.meta.variable_value_labels.items():
-                if var in labeled_df.columns:
-                    labeled_df[var] = (
-                        labeled_df[var].map(labels).fillna(labeled_df[var])
-                    )
-
-            labeled_df.rename(
-                columns={
-                    col: label
-                    for col, label in self.database.meta.column_names_to_labels.items()
-                    if col in filtered_df.columns
-                },
-                inplace=True,
+        try:
+            filtered_df.write_excel(
+                output_file, sheet_name="Numeric Data", index=False, mode="w"
             )
+            print(f"Sheet 'Numeric Data' written to {output_file}")
+        except Exception as e:
+            print(f"Error writing 'Numeric Data' sheet: {e}")
+            return  # Exit if the first sheet fails
 
-            labeled_df.to_excel(writer, sheet_name="Labeled Data", index=False)
+        labeled_df = filtered_df.clone()
 
-            self._generate_codebook(writer, filtered_df.columns.tolist())
+        expressions = []
+        for var, labels_map in self.database.meta.variable_value_labels.items():
+            if var in labeled_df.columns:
+                expressions.append(pl.col(var).replace(labels_map).alias(var))
 
-        print(f"Raw data exported to: {output_file}")
+        if expressions:
+            labeled_df = labeled_df.with_columns(expressions)
+            print("Value labels applied to 'Labeled Data'.")
+        else:
+            print("No value labels to apply or relevant columns found for labeling.")
 
-    def _generate_codebook(self, writer, filtered_columns):
-        """Generate a codebook sorted by the column order in the data export."""
-        print("Generating codebook...")
+        rename_map = {
+            col: label
+            for col, label in self.database.meta.column_names_to_labels.items()
+            if col in labeled_df.columns  # Ensure column exists in current DataFrame
+        }
+        if rename_map:
+            labeled_df = labeled_df.rename(rename_map)
+            print("Columns renamed for 'Labeled Data'.")
+        else:
+            print("No columns to rename for 'Labeled Data'.")
+
+        try:
+            labeled_df.write_excel(
+                output_file, sheet_name="Labeled Data", index=False, mode="a"
+            )
+            print(f"Sheet 'Labeled Data' written to {output_file}")
+        except Exception as e:
+            print(f"Error writing 'Labeled Data' sheet: {e}")
+
+        self._generate_codebook(output_file, filtered_df.columns.to_list())
+
+        print(f"Raw data and codebook exported to: {output_file}")
+
+    def _generate_codebook(self, output_file: str, filtered_columns: List[str]):
+        """
+        Generate a codebook sheet for the exported Excel file, sorted by the column order in the data export.
+        """
+        print("Generating codebook sheet...")
 
         var_code = [
             var for var in filtered_columns if var in self.database.meta.column_names
@@ -201,10 +227,24 @@ class Export:
             else:
                 codebook_data.append([var, var_label[i], var_type[i], "", ""])
 
-        codebook_df = pd.DataFrame(
-            codebook_data, columns=["Name", "Label", "Type", "Value", "Value Label"]
+        codebook_df = pl.DataFrame(
+            codebook_data,
+            schema=[
+                "Name",
+                "Label",
+                "Type",
+                "Value",
+                "Value Label",
+            ],
         )
-        codebook_df.to_excel(writer, sheet_name="Codebook", index=False)
+
+        try:
+            codebook_df.write_excel(
+                output_file, sheet_name="Codebook", index=False, mode="a"
+            )
+            print("Sheet 'Codebook' written successfully.")
+        except Exception as e:
+            print(f"Error writing 'Codebook' sheet: {e}")
 
     def generate_word_cloud(self):
         nlp = spacy.load("sv_core_news_lg")
