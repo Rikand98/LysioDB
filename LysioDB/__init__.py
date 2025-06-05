@@ -5,6 +5,6 @@ from .export import Export
 
 __version__ = "0.1.0"
 __author__ = "Rikard Andersson"
-__description__ = "RikardDB: A package for data processing"
+__description__ = "LysioDB: A package for data processing"
 
 __all__ = ["Database", "Config", "Transform", "Export"]

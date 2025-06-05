@@ -926,7 +926,7 @@ class Calculations:
             print(
                 "Warning: No questions from area_map found in DataFrame. Cannot calculate index."
             )
-            self.database.index = pl.DataFrame()  # Store empty DataFrame
+            self.database.index = pl.DataFrame()
             print("\n--- calculations done ---")
             return self.database.index
 
@@ -997,7 +997,6 @@ class Calculations:
                 .with_columns(pl.lit(category_column).alias("Category"))
                 .drop(category_column)
             )
-            print(df_category_filtered)
             nan_flag_cols = [
                 col
                 for col in df_category_filtered.columns
@@ -1124,7 +1123,8 @@ class Calculations:
                     )
                     melted_df = melted_df.with_columns(pl.col("Value").cast(pl.Float64))
             individual_question_index_df = (
-                melted_df.group_by(["Category", "Question", "Frågeområde", "Nan_Count"])
+                melted_df.fill_null(0)
+                .group_by(["Category", "Question", "Frågeområde", "Nan_Count"])
                 .agg(
                     [
                         pl.mean("Value").alias("Individual_Index"),
