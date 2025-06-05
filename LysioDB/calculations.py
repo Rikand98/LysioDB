@@ -1,8 +1,7 @@
 import pandas as pd
 import polars as pl
-import numpy as np
 import ipfn
-from typing import Dict, List, Any, Tuple, Optional
+from typing import Dict, List, Any, Optional
 
 
 class Calculations:
