@@ -1,7 +1,6 @@
 import polars as pl
 import pyreadstat as pystat
 import re
-import pyreadstat
 from thefuzz import process, fuzz
 
 
@@ -18,7 +17,7 @@ class Transform:
     ) -> pl.DataFrame:
         """Load background data from .sav or .xlsx file and merge it using Polars."""
         print("\n--- Loading background data ---")
-        database_df_pd, database_meta = pyreadstat.read_sav(database_path)
+        database_df_pd, database_meta = pystat.read_sav(database_path)
         database_df = pl.from_pandas(database_df_pd)
 
         try:
@@ -26,7 +25,7 @@ class Transform:
             background_meta = None
 
             if background_path.lower().endswith((".sav", ".zsav")):
-                background_df_pd, background_meta = pyreadstat.read_sav(background_path)
+                background_df_pd, background_meta = pystat.read_sav(background_path)
                 background_df = pl.from_pandas(background_df_pd)
             elif background_path.lower().endswith((".xls", ".xlsx")):
                 background_df = pl.read_excel(background_path)
@@ -126,7 +125,7 @@ class Transform:
             meta = None
 
             if background_file_path.lower().endswith((".sav", ".zsav")):
-                background_df_pd, meta = pyreadstat.read_sav(background_file_path)
+                background_df_pd, meta = pystat.read_sav(background_file_path)
                 background_df = pl.from_pandas(background_df_pd)
             elif background_file_path.lower().endswith((".xls", ".xlsx")):
                 background_df = pl.read_excel(background_file_path)
@@ -209,7 +208,7 @@ class Transform:
         merged_dfs = [self.database.df]
 
         for year, path in old_df_paths:
-            df, meta = pyreadstat.read_sav(path)
+            df, meta = pystat.read_sav(path)
             df = df.loc[:, ~df.columns.duplicated()]
 
             old_questions = meta.column_names_to_labels
@@ -359,7 +358,7 @@ class Transform:
         merged_dfs = [self.database.df]
 
         for year, path in old_df_paths:
-            df, meta = pyreadstat.read_sav(path)
+            df, meta = pystat.read_sav(path)
             df = df.loc[:, ~df.columns.duplicated()]
             question_mapping = self._get_question_mapping(df, meta, base_questions)
 
