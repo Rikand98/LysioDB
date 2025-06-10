@@ -1,6 +1,7 @@
 class Config:
     def __init__(
         self,
+        weight_column=None,
         minimum_count=None,
         question_prefixes=None,
         separator_m=None,
@@ -18,6 +19,7 @@ class Config:
         template_map=None,
     ):
         # Constants
+        self.WEIGHT_COLUMN = weight_column or "weight"
         self.MINIMUM_COUNT = minimum_count or 5
         self.QUESTION_PREFIXES = question_prefixes or ["Q"]
         self.SEPARATOR_M = separator_m or " = "
@@ -28,7 +30,7 @@ class Config:
         self.BASE_GRID_PATTERN = None
         question_prefix_base = r"^(" + "|".join(self.QUESTION_PREFIXES) + r")"
         if single_choice_pattern is None or single_choice_pattern == "":
-            self.SINGLE_CHOICE_PATTERN = question_prefix_base + r"\d*$"
+            self.SINGLE_CHOICE_PATTERN = question_prefix_base + r"\d*[a-zA-Z]?$"
         else:
             self.SINGLE_CHOICE_PATTERN = (
                 question_prefix_base + f"{single_choice_pattern}$"

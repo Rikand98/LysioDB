@@ -115,7 +115,7 @@ class Export:
         }
 
         filtered_df = self.database.df.drop(
-            columns=[col for col in direct_columns if col in self.database.df.columns]
+            [col for col in direct_columns if col in self.database.df.columns]
         )
 
         filtered_column_labels = {
@@ -131,7 +131,7 @@ class Export:
         }
 
         pystat.write_sav(
-            filtered_df,
+            filtered_df.to_pandas(),
             file_path,
             column_labels=filtered_column_labels,
             variable_value_labels=filtered_variable_value_labels,

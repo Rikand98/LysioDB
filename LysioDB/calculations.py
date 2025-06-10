@@ -1,6 +1,6 @@
 import pandas as pd
 import polars as pl
-import ipfn
+from ipfn import ipfn
 from typing import Dict, List, Any, Optional
 
 
@@ -15,35 +15,48 @@ class Calculations:
 
     def weights(self, file_name, target_columns: list, df_columns: list):
         """
+
         Dynamically calculates weights for a survey dataset using Iterative Proportional Fitting (IPF).
 
+
         Args:
+
             file_name (str): Path to the Excel file containing population targets.
+
             target_columns (list): Column names in the target data (Excel).
+
             df_columns (list): Corresponding column names in the survey data (`self.df`).
 
+
         Returns:
+
             pd.DataFrame: Survey data with calculated weights.
+
         """
+
         print("\n--- Start calculating weights ---")
 
         target_df = pd.read_excel(file_name)
+        df = self.database.df.to_pandas()
 
         mapped_cols = {}
+
         for col in df_columns:
             if col in self.database.meta.variable_value_labels:
                 mapped_col_name = f"{col}_mapped"
+
                 mapped_cols[mapped_col_name] = (
-                    self.database.df[col]
+                    df[col]
                     .map(self.database.metadata.get_value_labels(column=col))
-                    .fillna(self.database.df[col])
+                    .fillna(df[col])
                 )
 
         if mapped_cols:
             for col, values in mapped_cols.items():
-                self.database.df[col] = values
+                df[col] = values
 
         target_marginals = {}
+
         for i, col in enumerate(df_columns):
             if i < len(df_columns) - 1:
                 target_marginals[col] = (
@@ -52,11 +65,12 @@ class Calculations:
                     .sum(axis=1)
                     .to_dict()
                 )
+
             else:
                 target_marginals[col] = target_df[["Man", "Kvinna"]].sum().to_dict()
 
         weight_matrix = (
-            self.database.df.groupby([f"{col}_mapped" for col in df_columns])
+            df.groupby([f"{col}_mapped" for col in df_columns])
             .size()
             .reset_index(name="total")
         )
@@ -65,6 +79,7 @@ class Calculations:
             [list(target_marginals[col].keys()) for col in df_columns],
             names=[f"{col}_mapped" for col in df_columns],
         )
+
         weight_matrix = (
             weight_matrix.set_index([f"{col}_mapped" for col in df_columns])
             .reindex(all_combinations, fill_value=0)
@@ -77,23 +92,32 @@ class Calculations:
             )
             for col in df_columns
         ]
+
         dimensions = [[f"{df_columns[i]}_mapped"] for i in range(len(df_columns))]
 
         print("\nRunning IPFN...")
+
         ipfn_instance = ipfn.ipfn(weight_matrix, aggregates, dimensions)
+
         weight_matrix["weight"] = ipfn_instance.iteration().iloc[:, -1]
-        weight_matrix["weight"] = weight_matrix["weight"].fillna(0)
-        self.database.df = self.database.df.merge(
+
+        weight_matrix["weight"] = weight_matrix["weight"].fillna(1)
+
+        df = df.merge(
             weight_matrix[[f"{col}_mapped" for col in df_columns] + ["weight"]],
             left_on=[f"{col}_mapped" for col in df_columns],
             right_on=[f"{col}_mapped" for col in df_columns],
             how="left",
         )
-        mapped_columns = [
-            col for col in self.database.df.columns if col.endswith("_mapped")
-        ]
-        self.database.df.drop(columns=mapped_columns, inplace=True)
+
+        mapped_columns = [col for col in df.columns if col.endswith("_mapped")]
+
+        df.drop(columns=mapped_columns, inplace=True)
+
+        self.database.df = pl.DataFrame(df)
+
         print("\n--- done with calculations ---")
+
         return self.database.df
 
     def percentages(self, weights=False):
@@ -103,7 +127,7 @@ class Calculations:
         """
         print("\n--- Start calculating percentages ---")
 
-        use_weights = weights and (self.database.weight_column is not None)
+        use_weights = weights and (self.database.config.WEIGHT_COLUMN is not None)
         if weights and not use_weights:
             print(
                 "Warning: Weighting requested but weight column not available. Calculating unweighted percentages."
@@ -114,7 +138,7 @@ class Calculations:
 
         cols_to_select = category_cols + question_cols
         if use_weights:
-            cols_to_select.append(self.database.weight_column)
+            cols_to_select.append(self.database.config.WEIGHT_COLUMN)
 
         df_calc = self.database.df.select(cols_to_select, strict=False)
 
@@ -136,11 +160,12 @@ class Calculations:
                 f"Warning: config.NAN_VALUES is not a set or dict ({type(nan_values_config)}). Cannot replace or count specific NaN values."
             )
 
-        weight_sums_df = None
-        if use_weights:
-            weight_sums_df = df_calc.group_by(category_cols).agg(
-                pl.sum(self.database.weight_column).alias("total_weight")
-            )
+        print(df_calc)
+        # if use_weights:
+        #     df_calc = df_calc.group_by(category_cols).agg(
+        #         pl.sum(self.database.config.WEIGHT_COLUMN).alias("total_weight")
+        #     )
+        # print(df_calc)
 
         percentage_results_list: List[pl.DataFrame] = []
 
@@ -168,7 +193,7 @@ class Calculations:
 
             cols_for_this_group = columns + category_cols
             if use_weights:
-                cols_for_this_group.append(self.database.weight_column)
+                cols_for_this_group.append(self.database.config.WEIGHT_COLUMN)
 
             question_map = self.database.config.question_map
 
@@ -226,7 +251,9 @@ class Calculations:
                                 if use_weights:
                                     weighted_sum_expr = (
                                         pl.when(pl.col(col) == literal_value_expr)
-                                        .then(pl.col(self.database.weight_column))
+                                        .then(
+                                            pl.col(self.database.config.WEIGHT_COLUMN)
+                                        )
                                         .sum()
                                         .cast(pl.Float64)
                                         .alias(f"{col}_{value}_weighted_sum")
@@ -256,7 +283,7 @@ class Calculations:
                             if use_weights:
                                 nan_weighted_sum_expr = (
                                     pl.when(pl.col(col).is_in(nan_values_list))
-                                    .then(pl.col(self.database.weight_column))
+                                    .then(pl.col(self.database.config.WEIGHT_COLUMN))
                                     .sum()
                                     .cast(pl.Float64)
                                     .alias(f"{col}_nan_weighted_sum")
@@ -279,6 +306,17 @@ class Calculations:
                             .alias(f"{col}_total_count")
                         )
                         aggregation_expressions.append(total_count_for_col_expr)
+                        if use_weights:
+                            total_weighted_count_for_col_expr = (
+                                pl.when(~pl.col(col).is_in(nan_values_list))
+                                .then(pl.col(self.database.config.WEIGHT_COLUMN))
+                                .sum()
+                                .cast(pl.Float64)
+                                .alias(f"{col}_total_weighted_count")
+                            )
+                            aggregation_expressions.append(
+                                total_weighted_count_for_col_expr
+                            )
 
                 if not aggregation_expressions:
                     print(
@@ -315,20 +353,18 @@ class Calculations:
                             for value in possible_values:
                                 count_col_name = f"{col}_{value}_count"
                                 percentage_col_name = f"{col}_{value}_percentage"
-                                totalt_count = f"{col}_total_count"
+                                total_count = f"{col}_total_count"
                                 if count_col_name in grouped_agg_df.columns:
                                     if use_weights:
-                                        weighted_sum_col_name = (
-                                            f"{col}_{value}_weighted_sum"
+                                        weighted_sum = f"{col}_{value}_weighted_sum"
+                                        total_weighted_sum = (
+                                            f"{col}_total_weighted_count"
                                         )
-                                        if (
-                                            weighted_sum_col_name
-                                            in grouped_agg_df.columns
-                                        ):
+                                        if weighted_sum in grouped_agg_df.columns:
                                             percentage_expressions.append(
                                                 (
-                                                    pl.col(weighted_sum_col_name)
-                                                    / pl.col(totalt_count)
+                                                    pl.col(weighted_sum)
+                                                    / pl.col(total_weighted_sum)
                                                 )
                                                 .fill_null(0)
                                                 .cast(pl.Float64)
@@ -336,13 +372,13 @@ class Calculations:
                                             )
                                         else:
                                             print(
-                                                f"Warning: Weighted sum column '{weighted_sum_col_name}' not found for base question '{base_question}', column '{col}', value '{value}', category '{category_col}'. Skipping percentage."
+                                                f"Warning: Weighted sum column '{weighted_sum}' not found for base question '{base_question}', column '{col}', value '{value}', category '{category_col}'. Skipping percentage."
                                             )
                                     else:
                                         percentage_expressions.append(
                                             (
                                                 pl.col(count_col_name)
-                                                / pl.col(totalt_count)
+                                                / pl.col(total_count)
                                             )
                                             .fill_null(0)
                                             .fill_nan(0)
@@ -361,7 +397,7 @@ class Calculations:
                                     nan_weighted_sum_col_name = (
                                         f"{col}_nan_weighted_sum"
                                     )
-                                    totalt_count = f"{col}_total_count"
+                                    total_count = f"{col}_total_count"
                                     if (
                                         nan_weighted_sum_col_name
                                         in grouped_agg_df.columns
@@ -370,7 +406,7 @@ class Calculations:
                                             (
                                                 pl.col(nan_weighted_sum_col_name)
                                                 / (
-                                                    pl.col(totalt_count)
+                                                    pl.col(total_count)
                                                     + pl.col(nan_weighted_sum_col_name)
                                                 )
                                             )
@@ -388,7 +424,7 @@ class Calculations:
                                         (
                                             pl.col(nan_count_col_name)
                                             / (
-                                                pl.col(totalt_count)
+                                                pl.col(total_count)
                                                 + pl.col(nan_count_col_name)
                                             )
                                         )
@@ -657,7 +693,7 @@ class Calculations:
 
             if use_weights:
                 total_respondents_count = df_category_filtered.select(
-                    pl.sum(self.database.weight_column)
+                    pl.sum(self.database.config.WEIGHT_COLUMN)
                 ).item()
             else:
                 total_respondents_count = df_category_filtered.shape[0]
@@ -669,7 +705,7 @@ class Calculations:
                 continue
 
             id_vars_melt = [category_col] + (
-                [self.database.weight_column] if use_weights else []
+                [self.database.config.WEIGHT_COLUMN] if use_weights else []
             )
             id_vars_melt = [
                 col for col in id_vars_melt if col in df_category_filtered.columns
@@ -720,9 +756,10 @@ class Calculations:
             )
             if use_weights:
                 melted_df = melted_df.with_columns(
-                    (pl.col("rank_score") * pl.col(self.database.weight_column)).alias(
-                        "weighted_rank_score"
-                    )
+                    (
+                        pl.col("rank_score")
+                        * pl.col(self.database.config.WEIGHT_COLUMN)
+                    ).alias("weighted_rank_score")
                 )
 
             group_cols_agg = ["ranked_item_value"]
@@ -747,7 +784,7 @@ class Calculations:
                 if use_weights:
                     agg_exprs.append(
                         pl.when(pl.col("rank") == rank_value)
-                        .then(pl.col(self.database.weight_column))
+                        .then(pl.col(self.database.config.WEIGHT_COLUMN))
                         .sum()
                         .cast(pl.Float64)
                         .alias(f"rank_{rank_value}_weighted_sum")
