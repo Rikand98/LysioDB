@@ -26,8 +26,8 @@ class Identify:
             return
 
         all_relevant_cols_df = pl.DataFrame(
-            {"questions": relevant_column_names}
-        ).with_columns(pl.col("questions").cast(pl.Utf8).alias("questions"))
+            {"question": relevant_column_names}
+        ).with_columns(pl.col("question").cast(pl.Utf8).alias("question"))
 
         numeric_columns_set = sorted(
             list(
@@ -46,8 +46,8 @@ class Identify:
         numeric_string_columns_set = numeric_columns_set + string_columns_set
 
         df_categorized = all_relevant_cols_df.with_columns(
-            pl.col("questions").is_in(numeric_columns_set).alias("is_numeric")
-        ).filter(pl.col("questions").is_in(numeric_string_columns_set))
+            pl.col("question").is_in(numeric_columns_set).alias("is_numeric")
+        ).filter(pl.col("question").is_in(numeric_string_columns_set))
 
         if df_categorized.is_empty():
             self.database.question_sets_df = pl.DataFrame()
@@ -67,7 +67,7 @@ class Identify:
         numeric_pattern_category_expr = pl.lit("numeric_other")
 
         for category, pattern in reversed(list(patterns_map.items())):
-            condition = pl.col("questions").str.contains(pattern, strict=False)
+            condition = pl.col("question").str.contains(pattern, strict=False)
             numeric_pattern_category_expr = (
                 pl.when(condition)
                 .then(pl.lit(category))
@@ -84,7 +84,7 @@ class Identify:
             question_type_expr.alias("question_type")
         )
 
-        base_question_expr = pl.col("questions")
+        base_question_expr = pl.col("question")
 
         for category, pattern in patterns_map.items():
             pattern_to_sub = (
@@ -97,7 +97,7 @@ class Identify:
             base_question_expr = (
                 pl.when(pl.col("question_type") == category)
                 .then(
-                    pl.col("questions").str.replace_all(pattern_to_sub_lit, pl.lit(""))
+                    pl.col("question").str.replace_all(pattern_to_sub_lit, pl.lit(""))
                 )
                 .otherwise(base_question_expr)
             )
@@ -108,7 +108,7 @@ class Identify:
 
         df_categorized = df_categorized.with_columns(
             pl.when(pl.col("base_question") == "")
-            .then(pl.col("questions"))
+            .then(pl.col("question"))
             .otherwise(pl.col("base_question"))
             .alias("base_question")
         )
@@ -116,11 +116,11 @@ class Identify:
         try:
             all_labels_list = [
                 {
-                    "questions": col,
+                    "question": col,
                     "column_label": metadata.get_column_label(col),
                     "value_labels_info": metadata.get_value_labels(column=col),
                 }
-                for col in df_categorized["questions"].to_list()
+                for col in df_categorized["question"].to_list()
             ]
 
             cleaned_all_labels_list = []
@@ -139,14 +139,14 @@ class Identify:
             df_labels = pl.DataFrame(
                 cleaned_all_labels_list,
                 schema={
-                    "questions": pl.Utf8,
+                    "question": pl.Utf8,
                     "column_label": pl.Utf8,
                     "value_labels_info": pl.Object,
                     "value_labels": pl.Utf8,
                 },
             )
 
-            df_categorized = df_categorized.join(df_labels, on="questions", how="left")
+            df_categorized = df_categorized.join(df_labels, on="question", how="left")
 
         except Exception as e:
             print(f"Warning: Could not efficiently fetch metadata labels and join: {e}")
@@ -162,21 +162,30 @@ class Identify:
         apply_split_condition = pl.col("question_type").is_in(
             ["grid", "multi_response"]
         )
-        regex_pattern = r"^(.*)([-=])(.*)$"
-        extracted_parts = pl.col("column_label").str.extract_groups(
-            pattern=regex_pattern
+        regex_pattern_multi = r"^(.*)( \d{1,2} = )(.*)$"
+        multi_extracted_parts = pl.col("column_label").str.extract_groups(
+            pattern=regex_pattern_multi
         )
-        match_successful_condition = extracted_parts.struct[0].is_not_null()
+        match_multi_successful_condition = multi_extracted_parts.struct[0].is_not_null()
+        regex_pattern_grid = r"^(.*)( - )(.*)$"
+        grid_extracted_parts = pl.col("column_label").str.extract_groups(
+            pattern=regex_pattern_grid
+        )
+        match_grid_successful_condition = grid_extracted_parts.struct[1].is_not_null()
 
         base_question_label_expr = (
-            pl.when(apply_split_condition & match_successful_condition)
-            .then(extracted_parts.struct[0])
-            .otherwise(pl.lit("", dtype=pl.Utf8))
+            pl.when(apply_split_condition & match_multi_successful_condition)
+            .then(multi_extracted_parts.struct[0])
+            .when(apply_split_condition & match_grid_successful_condition)
+            .then(grid_extracted_parts.struct[0])
+            .otherwise(pl.col("column_label"))
         )
 
         question_label_expr = (
-            pl.when(apply_split_condition & match_successful_condition)
-            .then(extracted_parts.struct[2])
+            pl.when(apply_split_condition & match_multi_successful_condition)
+            .then(multi_extracted_parts.struct[2])
+            .when(apply_split_condition & match_grid_successful_condition)
+            .then(grid_extracted_parts.struct[2])
             .otherwise(pl.col("column_label"))
         )
 

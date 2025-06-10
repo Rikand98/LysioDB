@@ -30,15 +30,13 @@ class Export:
             sheets_to_write["Questions"] = self.database.question_df
             print("Added 'Questions' sheet.")
         else:
-            print(
-                "Percentage DataFrame is empty or None. Skipping 'Percentages' sheet."
-            )
+            print("Question DataFrame is empty or None. Skipping 'Questions' sheet.")
 
         if (
             self.database.percentage_df is not None
             and not self.database.percentage_df.is_empty()
         ):
-            sheets_to_write["Percentages"] = self.database.percentage_df
+            sheets_to_write["Percentages"] = self.database.percentage_df.fill_nan(0)
             print("Added 'Percentages' sheet.")
         else:
             print(
@@ -139,13 +137,15 @@ class Export:
 
         print(f"Database exported to: {file_path}")
 
-    def raw_data(self, output_file: str = "raw_data.xlsx"):
+    def raw_data(self, file_path: str = "raw_data.xlsx"):
         """
         Export raw data to Excel, ensuring consistent sorting and excluding 'direct' category columns.
         Generates two sheets: 'Numeric Data' (raw values) and 'Labeled Data' (with value labels applied).
         Also calls _generate_codebook to add a 'Codebook' sheet.
         """
         print("\n--- Exporting Raw Data to Excel ---")
+
+        sheets_to_write: Dict[str, pl.DataFrame] = {}
 
         direct_columns_to_drop = {
             category
@@ -157,21 +157,18 @@ class Export:
             [col for col in direct_columns_to_drop if col in self.database.df.columns]
         )
 
-        try:
-            filtered_df.write_excel(
-                output_file, sheet_name="Numeric Data", index=False, mode="w"
-            )
-            print(f"Sheet 'Numeric Data' written to {output_file}")
-        except Exception as e:
-            print(f"Error writing 'Numeric Data' sheet: {e}")
-            return  # Exit if the first sheet fails
+        if filtered_df is not None and not filtered_df.is_empty():
+            sheets_to_write["Numeric Data"] = filtered_df
+            print("Added 'Numeric Data' sheet.")
 
         labeled_df = filtered_df.clone()
 
         expressions = []
         for var, labels_map in self.database.meta.variable_value_labels.items():
             if var in labeled_df.columns:
-                expressions.append(pl.col(var).replace(labels_map).alias(var))
+                expressions.append(
+                    pl.col(var).cast(pl.Utf8).replace(labels_map).alias(var)
+                )
 
         if expressions:
             labeled_df = labeled_df.with_columns(expressions)
@@ -182,7 +179,7 @@ class Export:
         rename_map = {
             col: label
             for col, label in self.database.meta.column_names_to_labels.items()
-            if col in labeled_df.columns  # Ensure column exists in current DataFrame
+            if col in labeled_df.columns and label is not None
         }
         if rename_map:
             labeled_df = labeled_df.rename(rename_map)
@@ -190,26 +187,12 @@ class Export:
         else:
             print("No columns to rename for 'Labeled Data'.")
 
-        try:
-            labeled_df.write_excel(
-                output_file, sheet_name="Labeled Data", index=False, mode="a"
-            )
-            print(f"Sheet 'Labeled Data' written to {output_file}")
-        except Exception as e:
-            print(f"Error writing 'Labeled Data' sheet: {e}")
-
-        self._generate_codebook(output_file, filtered_df.columns.to_list())
-
-        print(f"Raw data and codebook exported to: {output_file}")
-
-    def _generate_codebook(self, output_file: str, filtered_columns: List[str]):
-        """
-        Generate a codebook sheet for the exported Excel file, sorted by the column order in the data export.
-        """
-        print("Generating codebook sheet...")
+        if labeled_df is not None and not labeled_df.is_empty():
+            sheets_to_write["Labeled Data"] = labeled_df
+            print("Added 'Labeled Data' sheet.")
 
         var_code = [
-            var for var in filtered_columns if var in self.database.meta.column_names
+            var for var in filtered_df.columns if var in self.database.meta.column_names
         ]
         var_label = [
             self.database.meta.column_names_to_labels.get(var, var) for var in var_code
@@ -238,13 +221,28 @@ class Export:
             ],
         )
 
-        try:
-            codebook_df.write_excel(
-                output_file, sheet_name="Codebook", index=False, mode="a"
-            )
-            print("Sheet 'Codebook' written successfully.")
-        except Exception as e:
-            print(f"Error writing 'Codebook' sheet: {e}")
+        if codebook_df is not None and not codebook_df.is_empty():
+            sheets_to_write["Codebook"] = codebook_df
+            print("Added 'Codebook' sheet.")
+
+        if sheets_to_write:
+            try:
+                with Workbook(file_path) as wb:
+                    for sheet_name, df_to_write in sheets_to_write.items():
+                        ws = wb.add_worksheet(sheet_name)
+                        df_to_write.write_excel(
+                            workbook=wb,
+                            worksheet=ws,
+                        )
+                        print(f"Written data to sheet: '{sheet_name}'.")
+
+                print(f"Excel file successfully saved at: {file_path}")
+            except Exception as e:
+                print(f"Error saving Excel file '{file_path}': {e}")
+        else:
+            print("No data to write to Excel. File not created.")
+
+        print(f"Raw data and codebook exported to: {file_path}")
 
     def generate_word_cloud(self):
         nlp = spacy.load("sv_core_news_lg")
@@ -287,5 +285,115 @@ class Export:
 
                 print(f"Saved word cloud for {question} as {image_filename}")
 
-    def tabel(self):
-        return
+    def long_format(
+        self,
+        columns: List[str],
+        file_path: str = "long_format_result.xlsx",
+    ):
+        """
+        Transforms the percentage results DataFrame from wide to a 'long' format
+        by unpivoting the dynamic category columns (e.g., 'Kvinna;18-29 år;Erikslustvägen-Linnégatan')
+        and splitting the concatenated category strings into separate, named columns.
+
+        The input DataFrame for this function is expected to be `self.database.percentage_df`,
+        which is typically generated by the `percentages` calculation and has been pivoted
+        such that the `Category_Value` (e.g., 'Kvinna;18-29 år;Erikslustvägen-Linnégatan')
+        are column headers.
+
+        Args:
+            category_split_columns (List[str]): A list of new column names to
+                                                assign to the parts of the split
+                                                category string (e.g., ["Gender", "AgeGroup", "Location"]).
+                                                The length of this list must match the expected number of parts
+                                                in the concatenated category string (separated by ';').
+            file_path (str): The path where the Excel file will be saved.
+                             Defaults to "long_format_result.xlsx".
+        """
+        print(f"\n--- Exporting long format results to '{file_path}' ---")
+
+        if (
+            self.database.percentage_df is None
+            or self.database.percentage_df.is_empty()
+        ):
+            print(
+                "Percentage DataFrame is empty or None. Cannot generate long format. Skipping export."
+            )
+            return
+
+        current_wide_df = self.database.percentage_df.clone()
+
+        fixed_index_cols = [
+            "question",
+            "display_question_label",
+            "answer_label",
+            "metric_type",
+        ]
+
+        dynamic_category_cols = [
+            col
+            for col in current_wide_df.columns
+            if col not in fixed_index_cols and col != "Totalt"
+        ]
+
+        if not dynamic_category_cols:
+            print(
+                "No dynamic category columns found in percentage_df. Already in a long-like format or no categories to split. Skipping."
+            )
+            return
+
+        unpivoted_df = current_wide_df.unpivot(
+            index=fixed_index_cols,
+            on=dynamic_category_cols,
+            variable_name="Concatenated_Category",
+            value_name="Value",
+        )
+
+        unpivoted_df = unpivoted_df.fill_nan(0)
+
+        if unpivoted_df.is_empty():
+            print(
+                "DataFrame became empty after unpivoting and dropping nulls. No data to export. Skipping."
+            )
+            return
+
+        split_exprs = []
+        for i, col_name in enumerate(columns):
+            split_exprs.append(
+                pl.col("Concatenated_Category")
+                .str.split(";")
+                .list.get(i)
+                .alias(col_name)
+            )
+
+        long_format_df = unpivoted_df.with_columns(split_exprs)
+
+        long_format_df = long_format_df.drop("Concatenated_Category")
+        pivot_index_for_metric = [
+            col for col in long_format_df.columns if col not in ["metric_type", "Value"]
+        ]
+
+        final_long_df = long_format_df.pivot(
+            index=pivot_index_for_metric,
+            columns="metric_type",
+            values="Value",
+            aggregate_function="first",
+        )
+        final_long_df = final_long_df.filter(pl.col("answer_label") != "Total")
+
+        sheets_to_write: Dict[str, pl.DataFrame] = {
+            "Long Format Results": final_long_df
+        }
+
+        try:
+            with Workbook(file_path) as wb:
+                for sheet_name, df_to_write in sheets_to_write.items():
+                    ws = wb.add_worksheet(sheet_name)
+                    df_to_write.write_excel(workbook=wb, worksheet=ws)
+                    print(f"Written data to sheet: '{sheet_name}'.")
+
+            print(f"Long format results successfully exported to: {file_path}")
+        except Exception as e:
+            print(
+                f"Error exporting long format results to Excel file '{file_path}': {e}"
+            )
+            raise

@@ -135,7 +135,7 @@ class Calculations:
             )
 
         category_cols = list(self.database.config.category_map.keys())
-        question_cols = self.database.question_df["questions"].unique().to_list()
+        question_cols = self.database.question_df["question"].to_list()
 
         cols_to_select = category_cols + question_cols
         if use_weights:
@@ -173,13 +173,12 @@ class Calculations:
             self.database.question_df.group_by(["base_question", "question_type"])
             .agg(
                 [
-                    pl.col("questions").unique().alias("columns"),
+                    pl.col("question").unique().alias("columns"),
                     pl.col("value_labels_info").first().alias("value_labels_info"),
                     pl.col("question_label").alias("question_labels"),
                     pl.col("base_question_label").first().alias("base_question_label"),
                 ]
             )
-            .sort("base_question")
             .iter_rows(named=True)
         )
 
@@ -476,6 +475,8 @@ class Calculations:
         final_results_df = None
         if percentage_results_list:
             combined_df = pl.concat(percentage_results_list, how="diagonal")
+            combined_df = combined_df.select(pl.exclude("^.*_weighted_sum$"))
+            combined_df = combined_df.select(pl.exclude("^.*_weighted_count$"))
 
             unpivot_index_vars = [
                 "Category",
@@ -606,7 +607,105 @@ class Calculations:
                 aggregate_function="first",
             )
 
-            # final_results_df = final_results_df.filter(pl.col("answer_value") != "null")
+            question_order_df = self.database.question_df.select(
+                ["question", "base_question_label", "question_label", "question_type"]
+            )
+            final_result_ordered_df = question_order_df.join(
+                final_results_df, on="question", how="left"
+            )
+
+            question_value_to_label_map = {}
+
+            for q_id, labels_map in self.database.meta.variable_value_labels.items():
+                question_type = self.database.question_df.filter(
+                    pl.col("question") == q_id
+                ).select("question_type")
+                if question_type.is_empty():
+                    continue
+
+                if question_type.item() == "multi_response":
+                    if (q_id, str(1)) not in question_value_to_label_map:
+                        question_value_to_label_map[(q_id, str(0.0))] = "Not selected"
+                        question_value_to_label_map[(q_id, str(1.0))] = (
+                            self.database.question_df.filter(pl.col("question") == q_id)
+                            .select("question_label")
+                            .item()
+                        )
+
+                else:
+                    for val, label in labels_map.items():
+                        if val in self.database.config.NAN_VALUES.keys():
+                            print(val)
+                            question_value_to_label_map[(q_id, "nan")] = label
+                        else:
+                            question_value_to_label_map[(q_id, str(val))] = label
+
+            final_result_ordered_df = (
+                final_result_ordered_df.with_columns(
+                    [
+                        pl.when(pl.col("question_type") == "multi_response")
+                        .then(
+                            pl.when(pl.col("answer_value") == "0.0")
+                            .then(pl.lit("Not select"))
+                            .when(pl.col("answer_value") == "1.0")
+                            .then(pl.col("question_label"))
+                            .otherwise(
+                                pl.struct(["question", "answer_value"]).map_elements(
+                                    lambda s: question_value_to_label_map.get(
+                                        (s.get("question"), s.get("answer_value")), None
+                                    ),
+                                    return_dtype=pl.Utf8,
+                                )
+                            )
+                        )
+                        .otherwise(
+                            pl.struct(["question", "answer_value"]).map_elements(
+                                lambda s: question_value_to_label_map.get(
+                                    (s.get("question"), s.get("answer_value")), None
+                                ),
+                                return_dtype=pl.Utf8,
+                            )
+                        )
+                        .alias("answer_label"),
+                        pl.when(pl.col("question_type") == "multi_response")
+                        .then(pl.col("base_question_label"))
+                        .otherwise(pl.col("question_label"))
+                        .alias("display_question_label"),
+                    ]
+                )
+                .filter(
+                    (
+                        (
+                            (pl.col("answer_label").is_not_null())
+                            | (pl.col("answer_value") == "total")
+                        )
+                        & (pl.col("answer_value") != "0.0")
+                    )
+                )
+                .fill_null("Total")
+                .drop(
+                    [
+                        "question_type",
+                        "base_question_label",
+                        "question_label",
+                        "answer_value",
+                    ]
+                )
+            )
+
+            first_columns = ["question", "display_question_label", "answer_label"]
+            final_result_ordered_df = final_result_ordered_df.select(
+                first_columns
+                + [
+                    col
+                    for col in final_result_ordered_df.columns
+                    if col not in first_columns
+                ]
+            )
+
+            print(
+                "Answer values replaced with labels and unlabelled non-total rows filtered."
+            )
 
         else:
             final_results_df = pl.DataFrame()
@@ -616,7 +715,7 @@ class Calculations:
             "\n--- Percentage calculations complete. Returning DataFrame in pivoted format. ---"
         )
 
-        self.database.percentage_df = final_results_df.sort("question")
+        self.database.percentage_df = final_result_ordered_df
 
         return final_results_df
 
