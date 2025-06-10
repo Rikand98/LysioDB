@@ -109,6 +109,7 @@ class Calculations:
             right_on=[f"{col}_mapped" for col in df_columns],
             how="left",
         )
+        df["weight"] = df["weight"].fillna(1)
 
         mapped_columns = [col for col in df.columns if col.endswith("_mapped")]
 
@@ -160,7 +161,6 @@ class Calculations:
                 f"Warning: config.NAN_VALUES is not a set or dict ({type(nan_values_config)}). Cannot replace or count specific NaN values."
             )
 
-        print(df_calc)
         # if use_weights:
         #     df_calc = df_calc.group_by(category_cols).agg(
         #         pl.sum(self.database.config.WEIGHT_COLUMN).alias("total_weight")
