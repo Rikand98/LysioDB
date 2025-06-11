@@ -748,7 +748,7 @@ class Calculations:
                 )
 
             possible_values = [
-                str(val)
+                float(val)
                 for val in value_labels_info.keys()
                 if val not in nan_values_list
             ]
@@ -823,10 +823,10 @@ class Calculations:
                 [
                     pl.col("rank_column")
                     .str.slice(rank_prefix_len)
-                    .cast(pl.Int64, strict=False)
+                    .cast(pl.Int64)
                     .alias("rank"),
                     pl.col("ranked_item_value")
-                    .cast(pl.Utf8)
+                    .cast(pl.Int64)
                     .alias("ranked_item_value"),
                 ]
             )
@@ -835,9 +835,7 @@ class Calculations:
                 pl.col("rank").is_not_null() & (pl.col("rank") > 0)
             )
             melted_df = melted_df.filter(
-                ~pl.col("ranked_item_value").is_in(
-                    [str(val) for val in nan_values_list]
-                )
+                ~pl.col("ranked_item_value").is_in([val for val in nan_values_list])
             )
             melted_df = melted_df.filter(
                 pl.col("ranked_item_value").is_in(possible_values)
@@ -876,7 +874,7 @@ class Calculations:
                 agg_exprs.append(
                     (pl.col("rank") == rank_value)
                     .sum()
-                    .cast(pl.Float64)
+                    .cast(pl.Int64)
                     .alias(f"rank_{rank_value}_count")
                 )
                 if use_weights:
@@ -884,7 +882,7 @@ class Calculations:
                         pl.when(pl.col("rank") == rank_value)
                         .then(pl.col(self.database.config.WEIGHT_COLUMN))
                         .sum()
-                        .cast(pl.Float64)
+                        .cast(pl.Int64)
                         .alias(f"rank_{rank_value}_weighted_sum")
                     )
 

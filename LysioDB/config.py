@@ -30,7 +30,7 @@ class Config:
         self.BASE_GRID_PATTERN = None
         question_prefix_base = r"^(" + "|".join(self.QUESTION_PREFIXES) + r")"
         if single_choice_pattern is None or single_choice_pattern == "":
-            self.SINGLE_CHOICE_PATTERN = question_prefix_base + r"\d*[a-zA-Z]?$"
+            self.SINGLE_CHOICE_PATTERN = question_prefix_base + r"\d+*[a-zA-Z]?$"
         else:
             self.SINGLE_CHOICE_PATTERN = (
                 question_prefix_base + f"{single_choice_pattern}$"
