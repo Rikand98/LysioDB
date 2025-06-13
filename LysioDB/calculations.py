@@ -37,6 +37,12 @@ class Calculations:
         print("\n--- Start calculating weights ---")
 
         target_df = pd.read_excel(file_name)
+        target_df = target_df.melt(
+            id_vars=["Område", "Ålder"],
+            value_vars=["Kvinna", "Man"],
+            var_name="Kön",
+            value_name="population",
+        )
         df = self.database.df.to_pandas()
 
         mapped_cols = {}
@@ -55,20 +61,9 @@ class Calculations:
             for col, values in mapped_cols.items():
                 df[col] = values
 
-        target_marginals = {}
-
-        for i, col in enumerate(df_columns):
-            if i < len(df_columns) - 1:
-                target_marginals[col] = (
-                    target_df.groupby(target_columns[i])[["Man", "Kvinna"]]
-                    .sum()
-                    .sum(axis=1)
-                    .to_dict()
-                )
-
-            else:
-                target_marginals[col] = target_df[["Man", "Kvinna"]].sum().to_dict()
-
+        target_marginals = (
+            target_df.groupby(target_columns)["population"].sum().to_dict()
+        )
         weight_matrix = (
             df.groupby([f"{col}_mapped" for col in df_columns])
             .size()
@@ -76,7 +71,7 @@ class Calculations:
         )
 
         all_combinations = pd.MultiIndex.from_product(
-            [list(target_marginals[col].keys()) for col in df_columns],
+            [list(target_df[col].unique()) for col in target_columns],
             names=[f"{col}_mapped" for col in df_columns],
         )
 
@@ -87,10 +82,10 @@ class Calculations:
         )
 
         aggregates = [
-            pd.Series(target_marginals[col]).reindex(
-                weight_matrix[col + "_mapped"].unique(), fill_value=0
-            )
-            for col in df_columns
+            pd.Series(
+                {key[i]: value for key, value in target_marginals.items()}
+            ).reindex(weight_matrix[col + "_mapped"].unique(), fill_value=0)
+            for i, col in enumerate(df_columns)
         ]
 
         dimensions = [[f"{df_columns[i]}_mapped"] for i in range(len(df_columns))]
@@ -160,12 +155,6 @@ class Calculations:
             print(
                 f"Warning: config.NAN_VALUES is not a set or dict ({type(nan_values_config)}). Cannot replace or count specific NaN values."
             )
-
-        # if use_weights:
-        #     df_calc = df_calc.group_by(category_cols).agg(
-        #         pl.sum(self.database.config.WEIGHT_COLUMN).alias("total_weight")
-        #     )
-        # print(df_calc)
 
         percentage_results_list: List[pl.DataFrame] = []
 
@@ -475,8 +464,7 @@ class Calculations:
         final_results_df = None
         if percentage_results_list:
             combined_df = pl.concat(percentage_results_list, how="diagonal")
-            combined_df = combined_df.select(pl.exclude("^.*_weighted_sum$"))
-            combined_df = combined_df.select(pl.exclude("^.*_weighted_count$"))
+            # combined_df = combined_df.select(pl.exclude("^.*_weighted_sum$"))
 
             unpivot_index_vars = [
                 "Category",
@@ -522,7 +510,11 @@ class Calculations:
                     [
                         pl.when(
                             pl.col("metric_type_raw").is_in(
-                                ["count", "percentage", "weighted_sum"]
+                                [
+                                    "count",
+                                    "percentage",
+                                    "weighted_sum",
+                                ]
                             )
                         )
                         .then(pl.col("metric_type_raw"))
@@ -567,7 +559,11 @@ class Calculations:
                         .alias("question"),
                         pl.when(
                             pl.col("metric_type").is_in(
-                                ["count", "percentage", "weighted_sum"]
+                                [
+                                    "count",
+                                    "percentage",
+                                    "weighted_sum",
+                                ]
                             )
                         )
                         .then(pl.col("answer_value_raw"))
@@ -1002,7 +998,7 @@ class Calculations:
 
         return ranking_category_dfs
 
-    def index(self, weight=None, scale=None, correlate=None):
+    def index(self, weights=False, scale=None, correlate=None):
         """
         Calculates index scores using vectorized Polars operations.
         Handles overall index, category-based index, and optional scaling.
@@ -1011,6 +1007,9 @@ class Calculations:
         print("\n--- Start calculating index ---")
 
         df_clean = self.database.df.clone()
+        use_weights = weights and (self.database.config.WEIGHT_COLUMN is not None)
+        if use_weights:
+            weight_column = self.database.config.WEIGHT_COLUMN
 
         nan_values_config = self.database.config.NAN_VALUES
         nan_values_list = []
@@ -1065,9 +1064,9 @@ class Calculations:
         if not self.database.config.category_map:
             print("Calculating overall index.")
             df_long = df_clean.select(
-                [weight] + questions_present if weight else questions_present
+                [weight_column] + questions_present if weights else questions_present
             ).melt(
-                id_vars=[weight] if weight else [],
+                id_vars=[weight_column] if weights else [],
                 value_vars=questions_present,
                 variable_name="Question",
                 value_name="Value",
@@ -1083,10 +1082,10 @@ class Calculations:
                 print("\n--- calculations done ---")
                 return self.database.index
 
-            if weight and weight in df_long.columns:
-                overall_index_expr = (pl.col("Value") * pl.col(weight)).sum() / pl.col(
-                    weight
-                ).sum()
+            if weights and weight_column in df_long.columns:
+                overall_index_expr = (
+                    pl.col("Value").fill_null(1) * pl.col(weight_column).fill_null(0)
+                ).sum() / pl.col(weight_column).fill_null(1).sum()
             else:
                 overall_index_expr = pl.col("Value").mean()
 
@@ -1150,9 +1149,9 @@ class Calculations:
                 continue
 
             melted_df = df_category_filtered.select(
-                ["Category"] + questions_present
+                ["Category", weight_column] + questions_present
             ).melt(
-                id_vars="Category",
+                id_vars=["Category", weight_column] if weights else ["Category"],
                 value_vars=questions_present,
                 variable_name="Question",
                 value_name="Value",
@@ -1254,12 +1253,21 @@ class Calculations:
                         .rename({"Value_scaled": "Value"})
                     )
                     melted_df = melted_df.with_columns(pl.col("Value").cast(pl.Float64))
+
+            if weights and weight_column in melted_df.columns:
+                individual_index_expr = (
+                    (pl.col("Value") * pl.col(weight_column)).sum()
+                    / pl.col(weight_column).sum()
+                ).alias("Individual_Index")
+            else:
+                individual_index_expr = pl.mean("Value").alias("Individual_Index")
+
             individual_question_index_df = (
                 melted_df.fill_null(0)
                 .group_by(["Category", "Question", "Frågeområde", "Nan_Count"])
                 .agg(
                     [
-                        pl.mean("Value").alias("Individual_Index"),
+                        individual_index_expr,
                         pl.count("Value").alias("Count_Individual"),
                     ]
                 )
@@ -1282,10 +1290,10 @@ class Calculations:
                 how="left",
             )
 
-            if weight and weight in melted_df.columns:
-                area_index_expr = (pl.col("Value") * pl.col(weight)).sum() / pl.col(
-                    weight
-                ).sum()
+            if weights and weight_column in melted_df.columns:
+                area_index_expr = (
+                    pl.col("Value") * pl.col(weight_column)
+                ).sum() / pl.col(weight_column).sum()
             else:
                 area_index_expr = pl.col("Value").mean()
 
