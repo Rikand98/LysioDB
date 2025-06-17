@@ -1649,7 +1649,7 @@ class Calculations:
 
         for row in open_text_questions_meta.iter_rows(named=True):
             base_question = row["base_question"]
-            question_columns = row.get("questions", [])
+            question_columns = row.get("question", [])
 
             if not question_columns:
                 print(
