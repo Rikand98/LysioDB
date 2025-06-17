@@ -1123,13 +1123,23 @@ class Calculations:
                 if col.endswith("_was_nan_value_code")
                 and df_category_filtered.schema[col] == pl.Boolean
             ]
-            nan_boolean_df = df_category_filtered.select(nan_flag_cols)
-            nan_counts = nan_boolean_df.sum().transpose(
-                include_header=True, header_name="Question", column_names=["Nan_Count"]
-            )
-            nan_counts = nan_counts.with_columns(
-                pl.col("Question").str.replace("_was_nan_value_code$", "")
-            )
+            if not nan_flag_cols:
+                nan_counts = pl.DataFrame(
+                    {
+                        "Question": pl.Series([], dtype=pl.Utf8),
+                        "Nan_Count": pl.Series([], dtype=pl.Float64),
+                    }
+                )
+            else:
+                nan_boolean_df = df_category_filtered.select(nan_flag_cols)
+                nan_counts = nan_boolean_df.sum().transpose(
+                    include_header=True,
+                    header_name="Question",
+                    column_names=["Nan_Count"],
+                )
+                nan_counts = nan_counts.with_columns(
+                    pl.col("Question").str.replace("_was_nan_value_code$", "")
+                )
 
             if df_category_filtered.is_empty():
                 print(
@@ -1137,9 +1147,11 @@ class Calculations:
                 )
                 continue
 
-            melted_df = df_category_filtered.select(
-                ["Category", weight_column] + questions_present
-            ).melt(
+            if weights:
+                select_columns = ["Category", weight_column] + questions_present
+            else:
+                select_columns = ["Category"] + questions_present
+            melted_df = df_category_filtered.select(select_columns).melt(
                 id_vars=["Category", weight_column] if weights else ["Category"],
                 value_vars=questions_present,
                 variable_name="Question",
@@ -1168,10 +1180,10 @@ class Calculations:
             if scale and len(scale) == 2:
                 question_meta_ranges = []
                 relevant_questions_df = self.database.question_df.filter(
-                    pl.col("questions").is_in(questions_present)
+                    pl.col("question").is_in(questions_present)
                 )
                 for row in relevant_questions_df.iter_rows(named=True):
-                    q_name = row["questions"]
+                    q_name = row["question"]
                     value_labels_info = row["value_labels_info"]
 
                     if value_labels_info and isinstance(value_labels_info, dict):
