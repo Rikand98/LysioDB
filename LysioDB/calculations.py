@@ -676,12 +676,17 @@ class Calculations:
                         "question_type",
                         "base_question_label",
                         "question_label",
-                        "answer_value",
+                        # "answer_value",
                     ]
                 )
             )
 
-            first_columns = ["question", "display_question_label", "answer_label"]
+            first_columns = [
+                "question",
+                "display_question_label",
+                "answer_label",
+                "answer_value",
+            ]
             final_result_ordered_df = final_result_ordered_df.select(
                 first_columns
                 + [
