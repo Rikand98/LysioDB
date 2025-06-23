@@ -72,6 +72,21 @@ class Export:
         else:
             print("Correlation list is empty or None. Skipping 'Correlation' sheet.")
 
+        if self.database.eni_df is not None and not self.database.eni_df.is_empty():
+            sheets_to_write["ENI"] = self.database.eni_df
+            print("Added 'ENI' sheet.")
+        else:
+            print("ENI list is empty or None. Skipping 'ENI' sheet.")
+        if (
+            self.database.eni_percentage_df is not None
+            and not self.database.eni_percentage_df.is_empty()
+        ):
+            sheets_to_write["ENI Percentages"] = self.database.eni_percentage_df
+            print("Added 'ENI Percentages' sheet.")
+        else:
+            print(
+                "ENI Percentages list is empty or None. Skipping 'ENI Percentages' sheet."
+            )
         if (
             self.database.open_text_df is not None
             and not self.database.open_text_df.is_empty()

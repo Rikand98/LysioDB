@@ -1633,6 +1633,195 @@ class Calculations:
         print("Correlation calculations complete.")
         return self.database.correlate_df
 
+    def eni(self, area: str, weights=False):
+        """
+        Calculates index scores using vectorized Polars operations.
+        Handles overall index, category-based index, and optional scaling.
+        Stores the result in self.database.index.
+        """
+        print("\n--- Start calculating ENI ---")
+
+        df_clean = self.database.df.clone()
+        use_weights = weights and (self.database.config.WEIGHT_COLUMN is not None)
+        if use_weights:
+            weight_column = self.database.config.WEIGHT_COLUMN
+
+        nan_values_config = self.database.config.NAN_VALUES
+        nan_values_list = []
+        if isinstance(nan_values_config, (set, dict)):
+            nan_values_list = list(
+                nan_values_config.keys()
+                if isinstance(nan_values_config, dict)
+                else nan_values_config
+            )
+
+        if nan_values_list:
+            flag_expressions = [
+                pl.col(col).is_in(nan_values_list).alias(f"{col}_was_nan_value_code")
+                for col in df_clean.columns
+                if col in self.database.meta.variable_value_labels
+                and any(
+                    value in nan_values_list
+                    for value in self.database.meta.variable_value_labels[col].keys()
+                )
+            ]
+            if flag_expressions:
+                df_clean = df_clean.with_columns(flag_expressions)
+
+            replace_expressions = [
+                pl.col(col).replace(nan_values_config)
+                for col in df_clean.columns
+                if col in self.database.meta.variable_value_labels
+                and any(
+                    value in nan_values_list
+                    for value in self.database.meta.variable_value_labels[col].keys()
+                )
+            ]
+            if replace_expressions:
+                df_clean = df_clean.with_columns(replace_expressions)
+
+        questions_present = [
+            q for q in self.database.config.area_map.get(area) if q in df_clean.columns
+        ]
+
+        if not questions_present:
+            print(
+                "Warning: No questions from area_map found in DataFrame. Cannot calculate ENI."
+            )
+            self.database.index = pl.DataFrame()
+            print("\n--- calculations done ---")
+            return self.database.index
+
+        print("Calculating category-based ENI.")
+        categories = list(self.database.config.category_map.keys())
+
+        results_list = []
+
+        for category_column in categories:
+            if category_column not in df_clean.columns:
+                print(
+                    f"Warning: Category column '{category_column}' not found in DataFrame. Skipping index calculation for this category."
+                )
+                continue
+
+            category_membership_value = 1
+            df_category_filtered = (
+                df_clean.filter(pl.col(category_column) == category_membership_value)
+                .with_columns(pl.lit(category_column).alias("Category"))
+                .drop(category_column)
+            )
+            nan_flag_cols = [
+                col
+                for col in df_category_filtered.columns
+                if col.endswith("_was_nan_value_code")
+                and df_category_filtered.schema[col] == pl.Boolean
+            ]
+            if not nan_flag_cols:
+                nan_counts = pl.DataFrame(
+                    {
+                        "Question": pl.Series([], dtype=pl.Utf8),
+                        "Nan_Count": pl.Series([], dtype=pl.Float64),
+                    }
+                )
+            else:
+                nan_boolean_df = df_category_filtered.select(nan_flag_cols)
+                nan_counts = nan_boolean_df.sum().transpose(
+                    include_header=True,
+                    header_name="Question",
+                    column_names=["Nan_Count"],
+                )
+                nan_counts = nan_counts.with_columns(
+                    pl.col("Question").str.replace("_was_nan_value_code$", "")
+                )
+
+            if df_category_filtered.is_empty():
+                print(
+                    f"Warning: Filtered DataFrame for category '{category_column}' is empty. Skipping ENI calculation for this category."
+                )
+                continue
+
+            if weights:
+                select_columns = ["Category", weight_column] + questions_present
+            else:
+                select_columns = ["Category"] + questions_present
+            df_category = df_category_filtered.select(select_columns).with_columns(
+                pl.mean_horizontal(questions_present).alias("Value")
+            )
+
+            eni_df = df_category.with_columns(
+                pl.when(pl.col("Value").is_between(3.0, 4.19))
+                .then(pl.lit("2"))
+                .when(pl.col("Value") >= 4.2)
+                .then(pl.lit("3"))
+                .otherwise(pl.lit("1"))
+                .alias("ENI_Category")
+            )
+            eni_counts_df = eni_df.group_by("Category", "ENI_Category").agg(
+                pl.count().alias("category_count")
+            )
+            total_counts_df = eni_df.group_by("Category").agg(
+                pl.count().alias("total_responses")
+            )
+            eni_proportions_df = (
+                eni_counts_df.join(total_counts_df, on=["Category"], how="left")
+                .with_columns(
+                    (pl.col("category_count") / pl.col("total_responses")).alias(
+                        "ENI_Proportion"
+                    )
+                )
+                .sort("Category", "ENI_Category")
+            )
+
+            results_list.append(eni_proportions_df)
+
+        if results_list:
+            final_result = pl.concat(results_list, how="vertical")
+
+            pivot = final_result.pivot(
+                index="Category",
+                columns=["ENI_Category"],
+                values="ENI_Proportion",
+                aggregate_function="first",
+            ).fill_null(0)
+            self.database.eni_df = pivot
+            print("Category-based ENI calculation complete.")
+            percentages = self._eni_percentage()
+            return self.database.eni_df
+
+    def _eni_percentage(self):
+        df = self.database.percentage_df
+
+        grouped_answer_expr = (
+            pl.when(pl.col("answer_value").is_in(["1.0", "2.0"]))
+            .then(pl.lit("1-2"))
+            .when(pl.col("answer_value").is_in(["3.0", "4.0"]))
+            .then(pl.lit("3-4"))
+            .when(pl.col("answer_value") == "5.0")
+            .then(pl.lit("5"))
+            .otherwise(pl.lit("Other"))
+            .alias("grouped_answer_value")
+        )
+        agg_expressions = [
+            pl.sum(col).alias(col) for col in self.database.config.category_map.keys()
+        ]
+        recoded_df = (
+            df.group_by("question", grouped_answer_expr, "metric_type")
+            .agg(*agg_expressions)
+            .sort("question", "grouped_answer_value")
+        )
+        final_df = recoded_df.with_columns(
+            pl.when(pl.col("grouped_answer_value") == "1-2")
+            .then(pl.lit("Motarbeidere"))
+            .when(pl.col("grouped_answer_value") == "3-4")
+            .then(pl.lit("Nøytrale"))
+            .when(pl.col("grouped_answer_value") == "5")
+            .then(pl.lit("Engasjerte"))
+            .otherwise(pl.lit("Ukjent"))
+            .alias("label")
+        )
+        self.database.eni_percentage_df = final_df
+        return final_df
+
     def open_text(self) -> pl.DataFrame:
         """
         Extracts open text responses from the main DataFrame and stores them
@@ -1703,3 +1892,6 @@ class Calculations:
 
         print("\n--- Open Text Extraction Complete ---")
         return self.database.open_text_df
+
+
+print("Category-based index calculation complete.")

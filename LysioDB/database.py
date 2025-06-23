@@ -23,6 +23,8 @@ class Database:
         self.percentage_df = pl.DataFrame()
         self.ranked_df = pl.DataFrame()
         self.index_df = pl.DataFrame()
+        self.eni_df = pl.DataFrame()
+        self.eni_percentage_df = pl.DataFrame()
         self.correlate_df = pl.DataFrame()
         self.open_text_df = pl.DataFrame()
 
