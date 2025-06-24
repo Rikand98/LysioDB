@@ -1,7 +1,9 @@
 import os
+from typing_extensions import dataclass_transform
 import pptx
 import re
 import numpy as np
+import polars as pl
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.enum.chart import XL_CHART_TYPE
 from pptx.chart.chart import Chart
@@ -83,11 +85,11 @@ class Power:
                         year_value = year_mapping.get(year)
                         area_name = area_mapping.get(area)
                         category_label = f"{year_value}:{category}"
-                        if category_label in self.database.index["Category"].values:
+                        if category_label in self.database.index_df["Category"]:
                             try:
                                 result_value = (
-                                    self.database.index.loc[
-                                        self.database.index["Category"]
+                                    self.database.index_df.loc[
+                                        self.database.index_df["Category"]
                                         == category_label,
                                         (slice(None), area_name),
                                     ]
@@ -151,11 +153,11 @@ class Power:
                             year = question_match.group(0).split(":")[-1]
                             year_value = year_mapping.get(year)
                             category_label = f"{year_value}:{category}"
-                            if category_label in self.database.index["Category"].values:
+                            if category_label in self.database.index_df["Category"]:
                                 try:
                                     result_value = (
-                                        self.database.index.loc[
-                                            self.database.index["Category"]
+                                        self.database.index_df.loc[
+                                            self.database.index_df["Category"]
                                             == category_label,
                                             (slice(None), question),
                                         ]
@@ -187,11 +189,11 @@ class Power:
                         year_value = year_mapping.get(year)
                         area_name = area_mapping.get(area)
                         category_label = f"{year_value}:{category}"
-                        if category_label in self.database.index["Category"].values:
+                        if category_label in self.database.index_df["Category"]:
                             try:
                                 result_value = (
-                                    self.database.index.loc[
-                                        self.database.index["Category"]
+                                    self.database.index_df.loc[
+                                        self.database.index_df["Category"]
                                         == category_label,
                                         (slice(None), area_name),
                                     ]
@@ -215,11 +217,19 @@ class Power:
 
                         try:
                             nan = (
-                                self.database.percentage.get(base_question)
-                                .get(f"{year}:{category}")
-                                .get(question_part)
-                                .get("nan_percentage")
+                                self.database.percentage_df.filter(
+                                    (pl.col("question") == question)
+                                    & (pl.col("metric_type") == "percentage")
+                                    & (
+                                        pl.col("answer_value").is_in(
+                                            self.database.config.NAN_VALUES.keys()
+                                        )
+                                    )
+                                )
+                                .select(pl.col(f"{year}:{category}"))
+                                .item(0, 0)
                             )
+
                             if nan is not None:
                                 nan_percentage_value = nan.values[0] * 100
                                 self._update_cell_text(
@@ -240,12 +250,19 @@ class Power:
                         base_question = self._get_base_question(question_part)
                         try:
                             count_value = (
-                                self.database.percentage.get(base_question)
-                                .get(f"{year}:{category}")
-                                .get(question_part)
-                                .get("count")
-                                .values[0]
+                                self.database.percentage_df.filter(
+                                    (pl.col("question") == question)
+                                    & (pl.col("metric_type") == "count")
+                                    & (
+                                        pl.col("answer_value").is_in(
+                                            ~self.database.config.NAN_VALUES.keys()
+                                        )
+                                    )
+                                )
+                                .select(pl.col(f"{year}:{category}"))
+                                .sum()
                             )
+
                             self._update_cell_text(cell, str(count_value))
                         except (KeyError, IndexError) as e:
                             print(
@@ -283,7 +300,6 @@ class Power:
                 all_value_labels = []
                 all_series_values = {}
                 for suffix in template_val_name_suffixes:
-                    # Extract base question from category
                     question_part = suffix
                     base_question = self._get_base_question(question_part)
                     var_labels.append(
@@ -297,17 +313,13 @@ class Power:
                         if var != "":
                             try:
                                 var_num = float(var)
-                                percentage_column_name = (
-                                    self.database.question_sets.get(base_question)
-                                    .get("value_labels")
-                                    .get(var_num)
-                                )
-
                                 value = (
-                                    self.database.percentage.get(base_question)
-                                    .get(category)
-                                    .get(question_part)
-                                    .get(percentage_column_name)
+                                    self.database.percentage_df.filter(
+                                        (pl.col("question") == question_part)
+                                        & (pl.col("answer_value") == var_num)
+                                    )
+                                    .select(pl.col("Category") == category)
+                                    .item(0, 0)
                                 )
                                 if value.empty:
                                     series_values.append("nan")
@@ -349,7 +361,6 @@ class Power:
                 all_value_labels = []
                 all_series_values = []
                 for var in var_names:
-                    # Extract base question from category
                     question_part = var
                     base_question = self._get_base_question(question_part)
                     var_labels.append(
@@ -362,16 +373,13 @@ class Power:
                     for suffix in template_val_name_suffixes:
                         try:
                             var_num = float(suffix)
-                            percentage_column_name = (
-                                self.database.question_sets.get(base_question)
-                                .get("value_labels")
-                                .get(var_num)
-                            )
                             value = (
-                                self.database.percentage.get(base_question)
-                                .get(category)
-                                .get(question_part)
-                                .get(percentage_column_name)
+                                self.database.percentage_df.filter(
+                                    (pl.col("question") == question_part)
+                                    & (pl.col("answer_value") == var_num)
+                                )
+                                .select(pl.col("Category") == category)
+                                .item(0, 0)
                             )
                             if value.empty:
                                 series_values.append("nan")
@@ -395,13 +403,10 @@ class Power:
                 chart_data.categories = var_labels
                 for i, suffix in enumerate(template_val_name_suffixes):
                     try:
-                        # Get the series name from all_variable_labels
                         series_label = all_value_labels[0][i]
 
-                        # Get the series data
                         series_data = [row[i] for row in all_series_values]
 
-                        # Add the series to the chart
                         chart_data.add_series(series_label, series_data)
 
                     except (KeyError, ValueError, IndexError) as e:
@@ -480,11 +485,7 @@ class Power:
         Returns:
             str or None: The column label for the given sub-question, or None if not found.
         """
-        if (
-            base_question in self.database.question_sets
-            and "column" in self.database.question_sets[base_question]
-            and "column_labels" in self.database.question_sets[base_question]
-        ):
+        if base_question in self.database.question_df["base_question"]:
             try:
                 index = self.database.question_sets[base_question]["column"].index(
                     column
@@ -503,22 +504,12 @@ class Power:
         return str(number)
 
     def _get_base_question(self, question):
-        multi_base = re.search(self.database.config.MULTI_RESPONSE_PATTERN, question)
-        grid_base = re.search(self.database.config.GRID_PATTERN, question)
-        if multi_base:
-            base_question = re.split(
-                self.database.config.MULTI_RESPONSE_PATTERN, question
-            )[0]
-        elif grid_base:
-            if self.database.config.BASE_GRID_PATTERN is not None:
-                base_question = re.split(
-                    self.database.config.BASE_GRID_PATTERN, question
-                )[0]
-            else:
-                base_question = re.split(self.database.config.GRID_PATTERN, question)[0]
-        else:
-            base_question = question
-
+        if question in self.database.question_df["question"]:
+            base_question = (
+                self.database.question_df.filter(pl.col("question") == question)
+                .select(pl.col("base_question"))
+                .item(0, 0)
+            )
         return str(base_question)
 
     def _get_min_max(self, category):
