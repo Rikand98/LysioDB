@@ -60,7 +60,6 @@ class Transform:
                 right_on=background_token,
                 how="left",
             )
-            print(database_df)
 
             if background_meta is not None:
                 database_meta.column_names_to_labels.update(
@@ -115,88 +114,6 @@ class Transform:
 
         print("Background data and metadata added successfully.")
         return database_df
-
-    def add_background(self, background_file_path: str) -> pl.DataFrame:
-        """Load background data from .sav or .xlsx file and merge it using Polars."""
-        print("\n--- Loading background data ---")
-
-        try:
-            background_df = None
-            meta = None
-
-            if background_file_path.lower().endswith((".sav", ".zsav")):
-                background_df_pd, meta = pystat.read_sav(background_file_path)
-                background_df = pl.from_pandas(background_df_pd)
-            elif background_file_path.lower().endswith((".xls", ".xlsx")):
-                background_df = pl.read_excel(background_file_path)
-                meta = None
-            else:
-                raise ValueError(
-                    "Unsupported file format. Please provide a .sav, .zsav, .xls, or .xlsx file."
-                )
-
-            if background_df is None:
-                raise RuntimeError(
-                    "Failed to load background data into a Polars DataFrame."
-                )
-
-            if (
-                "token" not in self.database.df.columns
-                or "token" not in background_df.columns
-            ):
-                raise ValueError(
-                    "Both DataFrames must contain a 'token' column for merging."
-                )
-
-            self.database.df = self.database.df.join(
-                background_df, on="token", how="left"
-            )
-
-            if meta is not None:
-                self.database.meta.column_names_to_labels.update(
-                    meta.column_names_to_labels
-                )
-                self.database.meta.variable_value_labels.update(
-                    meta.variable_value_labels
-                )
-                self.database.meta.column_names.extend(
-                    [
-                        name
-                        for name in meta.column_names
-                        if name not in self.database.meta.column_names
-                    ]
-                )
-                self.database.meta.column_labels.extend(
-                    [
-                        meta.column_names_to_labels.get(name, name)
-                        for name in meta.column_names
-                        if name not in self.database.meta.column_names
-                    ]
-                )
-                self.database.meta.readstat_variable_types.update(
-                    meta.readstat_variable_types
-                )
-            else:
-                print(
-                    "No detailed metadata available from the loaded file type (e.g., Excel). Metadata was not updated from the file."
-                )
-
-            print("Background data loading and merging process completed.")
-
-        except FileNotFoundError:
-            print(f"Error: File not found at {background_file_path}")
-            raise
-        except ValueError as ve:
-            print(f"Configuration or data error: {ve}")
-            raise
-        except Exception as e:
-            print(
-                f"An unexpected error occurred during background data processing: {e}"
-            )
-            raise
-
-        print("Background data and metadata added successfully.")
-        return self.database
 
     def map(self, old_df_paths):
         """
