@@ -1892,6 +1892,3 @@ class Calculations:
 
         print("\n--- Open Text Extraction Complete ---")
         return self.database.open_text_df
-
-
-print("Category-based index calculation complete.")
