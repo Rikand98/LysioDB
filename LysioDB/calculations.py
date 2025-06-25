@@ -1,3 +1,4 @@
+from types import prepare_class
 import pandas as pd
 import polars as pl
 from ipfn import ipfn
@@ -1164,7 +1165,7 @@ class Calculations:
             )
             melted_df = melted_df.join(nan_counts, on="Question", how="left")
 
-            melted_df = melted_df.drop_nulls(subset=["Value"])
+            melted_df = melted_df.drop_nans(subset=["Value"])
 
             if melted_df.is_empty():
                 print(
@@ -1464,7 +1465,7 @@ class Calculations:
                 try:
                     df_subset = df_overall.select(
                         [pl.col(avg_col_name), pl.col(question)]
-                    ).drop_nulls()
+                    ).drop_nans()
 
                     if df_subset.height > 1:
                         correlation_value = df_subset.corr(method="pearson")
@@ -1526,7 +1527,7 @@ class Calculations:
         for category_col in category_cols_present:
             print(f"Calculating correlation for category: {category_col}")
 
-            category_membership_value = 1  # Default membership value
+            category_membership_value = 1
             filtered_df = (
                 df.filter(pl.col(category_col) == category_membership_value)
                 .with_columns(pl.lit(category_col).alias("Category"))
@@ -1575,7 +1576,7 @@ class Calculations:
                 try:
                     df_subset = df_category_area.select(
                         [pl.col(avg_col_name), pl.col(question)]
-                    ).drop_nulls()
+                    ).drop_nans()
                     if df_subset.height > 1:
                         correlation_value = df_subset.select(
                             pl.corr(question, avg_col_name)

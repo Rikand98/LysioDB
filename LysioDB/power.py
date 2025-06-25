@@ -109,7 +109,6 @@ class Power:
 
                     if freq_match:
                         text = "test"
-                # Replace placeholders using the replace_simple_placeholders function
                 run.text = text
 
     def _update_table(self, table, area_mapping, year_mapping, category):
