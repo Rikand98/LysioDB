@@ -87,13 +87,11 @@ class Power:
                         if category_label in self.database.index_df["Category"]:
                             try:
                                 result_value = (
-                                    self.database.index_df.loc[
-                                        self.database.index_df["Category"]
-                                        == category_label,
-                                        (slice(None), area_name),
-                                    ]
-                                    .values[0][0]
-                                    .round(2)
+                                    self.database.index_df.filter(
+                                        pl.col("Category") == category
+                                    )
+                                    .select(pl.col(area_name).round(2))
+                                    .item(0, 0)
                                 )
                                 result_value = self._format_number_swedish(result_value)
 
@@ -154,13 +152,11 @@ class Power:
                             if category_label in self.database.index_df["Category"]:
                                 try:
                                     result_value = (
-                                        self.database.index_df.loc[
-                                            self.database.index_df["Category"]
-                                            == category_label,
-                                            (slice(None), question),
-                                        ]
-                                        .values[0][0]
-                                        .round(2)
+                                        self.database.index_df.filter(
+                                            pl.col("Category") == category
+                                        )
+                                        .select(pl.col(question).round(2))
+                                        .item(0, 0)
                                     )
                                     result_value = self._format_number_swedish(
                                         result_value
@@ -190,13 +186,11 @@ class Power:
                         if category_label in self.database.index_df["Category"]:
                             try:
                                 result_value = (
-                                    self.database.index_df.loc[
-                                        self.database.index_df["Category"]
-                                        == category_label,
-                                        (slice(None), area_name),
-                                    ]
-                                    .values[0][0]
-                                    .round(2)
+                                    self.database.index_df.filter(
+                                        pl.col("Category") == category
+                                    )
+                                    .select(pl.col(area_name).round(2))
+                                    .item(0, 0)
                                 )
                                 result_value = self._format_number_swedish(result_value)
                                 if result_value == "nan":
@@ -216,20 +210,16 @@ class Power:
                         try:
                             nan = (
                                 self.database.percentage_df.filter(
-                                    (pl.col("question") == question)
+                                    (pl.col("question") == question_part)
                                     & (pl.col("metric_type") == "percentage")
-                                    & (
-                                        pl.col("answer_value").is_in(
-                                            self.database.config.NAN_VALUES.keys()
-                                        )
-                                    )
+                                    & (pl.col("answer_value") == "nan")
                                 )
                                 .select(pl.col(f"{year}:{category}"))
                                 .item(0, 0)
                             )
 
                             if nan is not None:
-                                nan_percentage_value = nan.values[0] * 100
+                                nan_percentage_value = nan * 100
                                 self._update_cell_text(
                                     cell, f"{int(nan_percentage_value)}%"
                                 )
@@ -247,18 +237,15 @@ class Power:
                         year = year_mapping.get("year_0")
                         base_question = self._get_base_question(question_part)
                         try:
-                            count_value = (
+                            count_value = int(
                                 self.database.percentage_df.filter(
-                                    (pl.col("question") == question)
+                                    (pl.col("question") == question_part)
                                     & (pl.col("metric_type") == "count")
-                                    & (
-                                        pl.col("answer_value").is_in(
-                                            ~self.database.config.NAN_VALUES.keys()
-                                        )
-                                    )
+                                    & (pl.col("answer_value") != "nan")
                                 )
                                 .select(pl.col(f"{year}:{category}"))
                                 .sum()
+                                .item(0, 0)
                             )
 
                             self._update_cell_text(cell, str(count_value))
@@ -306,7 +293,6 @@ class Power:
                         )
                     )
                     series_values = []
-                    val_labels = []
                     for var in var_names:
                         if var != "":
                             try:
@@ -314,20 +300,23 @@ class Power:
                                 value = (
                                     self.database.percentage_df.filter(
                                         (pl.col("question") == question_part)
-                                        & (pl.col("answer_value") == var_num)
+                                        & (pl.col("answer_value") == str(var_num))
+                                        & (pl.col("metric_type") == "percentage")
                                     )
-                                    .select(pl.col("Category") == category)
+                                    .select(category)
                                     .item(0, 0)
                                 )
-                                if value.empty:
+                                if not value:
                                     series_values.append("nan")
                                 else:
-                                    series_values.append(value.values[0])
+                                    series_values.append(value)
                                 if not all_value_labels:
-                                    val_labels.append(
-                                        self.database.question_sets.get(base_question)
-                                        .get("value_labels")
-                                        .get(var_num)
+                                    all_value_labels.append(
+                                        self.database.question_df.filter(
+                                            pl.col("question") == question_part
+                                        )
+                                        .select(pl.col("value_labels_info"))
+                                        .item(0, 0)
                                     )
                             except KeyError as e:
                                 print(f"KeyError: {e}")
@@ -335,12 +324,10 @@ class Power:
                                 print(f"ValueError: {e}")
 
                     all_series_values[suffix] = series_values
-                    if not all_value_labels:
-                        all_value_labels.append(val_labels)
 
-                chart_data.categories = all_value_labels[0]
+                chart_data.categories = all_value_labels[0].values()
                 for series_label, series_data in all_series_values.items():
-                    chart_data.add_series(series_label, series_data)  # add each series
+                    chart_data.add_series(series_label, series_data)
 
                 chart.replace_data(chart_data)
 
@@ -367,27 +354,29 @@ class Power:
                         )
                     )
                     series_values = []
-                    val_labels = []
                     for suffix in template_val_name_suffixes:
                         try:
                             var_num = float(suffix)
                             value = (
                                 self.database.percentage_df.filter(
                                     (pl.col("question") == question_part)
-                                    & (pl.col("answer_value") == var_num)
+                                    & (pl.col("answer_value") == str(var_num))
+                                    & (pl.col("metric_type") == "percentage")
                                 )
-                                .select(pl.col("Category") == category)
+                                .select(category)
                                 .item(0, 0)
                             )
-                            if value.empty:
+                            if not value:
                                 series_values.append("nan")
                             else:
-                                series_values.append(value.values[0])
+                                series_values.append(value)
                             if not all_value_labels:
-                                val_labels.append(
-                                    self.database.question_sets.get(base_question)
-                                    .get("value_labels")
-                                    .get(var_num)
+                                all_value_labels.append(
+                                    self.database.question_df.filter(
+                                        pl.col("question") == question_part
+                                    )
+                                    .select(pl.col("value_labels_info"))
+                                    .item(0, 0)
                                 )
                         except KeyError as e:
                             print(f"KeyError: {e}")
@@ -395,13 +384,12 @@ class Power:
                             print(f"ValueError: {e}")
 
                     all_series_values.append(series_values)
-                    if not all_value_labels:
-                        all_value_labels.append(val_labels)
 
                 chart_data.categories = var_labels
                 for i, suffix in enumerate(template_val_name_suffixes):
                     try:
-                        series_label = all_value_labels[0][i]
+                        series_label = all_value_labels[0].get(str(float(i) + 1))
+                        print(series_label)
 
                         series_data = [row[i] for row in all_series_values]
 
@@ -427,29 +415,28 @@ class Power:
                 chart.value_axis.visible = False
 
                 for i, question in self.database.matrix[self.matrix_counter].items():
-                    index = self.database.index.loc[
-                        self.database.index["Category"] == category,
-                        (slice(None), question),
-                    ]
-                    if index.empty:
-                        index_value = 0
-                    else:
-                        index_value = index.values[0][0]
-                    corr_df = self.database.correlation[
-                        self.database.correlation["Category_Type"] == category
-                    ]
-                    corr_df = corr_df.set_index("index")  # sets index column as index
-                    corr_value = corr_df.loc[question, "Correlation"]
-                    if np.isnan(corr_value) or corr_value <= 0:
-                        corr_value = 0
-                    if np.isnan(index_value):
+                    index = (
+                        self.database.index_df.filter(pl.col("Category") == category)
+                        .select(question)
+                        .item(0, 0)
+                    )
+                    corr = (
+                        self.database.correlate_df.filter(
+                            pl.col("Question") == question
+                        )
+                        .select("Correlation")
+                        .item(0, 0)
+                    )
+                    if np.isnan(corr) or corr <= 0:
+                        corr = 0
+                    if np.isnan(index):
                         index_value = 0
 
-                    all_corr_values.append(corr_value)
-                    all_index_values.append(index_value)
+                    all_corr_values.append(corr)
+                    all_index_values.append(index)
 
                     matrix_series = chart_data.add_series(str(i))
-                    matrix_series.add_data_point(corr_value, index_value)
+                    matrix_series.add_data_point(corr, index)
 
                 self.matrix_counter += 1
                 chart.replace_data(chart_data)
@@ -485,12 +472,9 @@ class Power:
         """
         if base_question in self.database.question_df["base_question"]:
             try:
-                index = self.database.question_sets[base_question]["column"].index(
-                    column
-                )
-                return self.database.question_sets[base_question]["column_labels"][
-                    index
-                ].strip()
+                return self.database.question_df.filter(pl.col("question") == column)[
+                    "question_label"
+                ][0]
             except ValueError:
                 return None
         return None
@@ -519,25 +503,22 @@ class Power:
         all_corr = []
         for area, questions in area_map.items():
             for question in questions:
-                index = self.database.index.loc[
-                    self.database.index["Category"] == category,
-                    (slice(None), question),
-                ]
-                if index.empty:
-                    continue
-                else:
-                    index_value = index.values[0][0]
+                index = (
+                    self.database.index_df.filter(pl.col("Category") == category)
+                    .select(area)
+                    .item(0, 0)
+                )
 
-                corr_df = self.database.correlation[
-                    self.database.correlation["Category_Type"] == category
-                ]
-                corr_df = corr_df.set_index("index")  # sets index column as index
-                corr_value = corr_df.loc[question, "Correlation"]
-                if np.isnan(corr_value) or np.isnan(index_value):
+                corr = (
+                    self.database.correlate_df.filter(pl.col("Question") == question)
+                    .select("Correlation")
+                    .item(0, 0)
+                )
+                if np.isnan(corr) or np.isnan(index):
                     continue
                 else:
-                    all_index.append(index_value)
-                    all_corr.append(corr_value)
+                    all_index.append(index)
+                    all_corr.append(corr)
 
         if not all_index:
             all_index.append(0)
