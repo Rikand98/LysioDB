@@ -262,12 +262,24 @@ class Export:
 
     def generate_word_cloud(self):
         nlp = spacy.load("sv_core_news_lg")
-        for question, details in self.database.question_sets.items():
-            if details.get("category") == "open_text":
+        for question in self.database.question_df["question"]:
+            if (
+                self.database.question_df.filter(pl.col("question") == question)
+                .select(pl.col("question_type"))
+                .item(0, 0)
+                == "open_text"
+            ):
                 question_label = self.database.question_sets.get(question, {}).get(
                     "column_labels", question
                 )
-                responses = self.database.open_text.get(question, [])
+                question_label = (
+                    self.database.question_df.filter(pl.col("question") == question)
+                    .select(pl.col("question_label"))
+                    .item(0, 0)
+                )
+                responses = self.database.open_text_df.filter(
+                    pl.col("question") == question
+                )
 
                 text = " ".join(responses)
 
