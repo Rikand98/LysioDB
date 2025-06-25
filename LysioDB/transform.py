@@ -40,7 +40,6 @@ class Transform:
                     "Failed to load background data into a Polars DataFrame."
                 )
 
-            # --- Check for the specified token columns ---
             if (
                 database_token not in database_df.columns
                 or background_token not in background_df.columns
@@ -115,16 +114,19 @@ class Transform:
         print("Background data and metadata added successfully.")
         return database_df
 
-    def map(self, old_df_paths):
+    def map(database_path: str, old_database_paths: dict, new_path: str):
         """
         Standardizes old datasets to match the 2025 schema and merges them
         by matching question text (metadata labels) instead of column names.
         """
-        base_questions = self.database.meta.column_names_to_labels
-        self.database.df["year"] = "2025"
-        merged_dfs = [self.database.df]
+        database_df_pd, database_meta = pystat.read_sav(database_path)
+        database_df = pl.from_pandas(database_df_pd)
 
-        for year, path in old_df_paths:
+        base_questions = database_meta.column_names_to_labels
+        database_df = database_df.with_columns(pl.lit("2025").alias("year"))
+        merged_dfs = [database_df]
+
+        for year, path in old_database_paths:
             df, meta = pystat.read_sav(path)
             df = df.loc[:, ~df.columns.duplicated()]
 
@@ -226,7 +228,7 @@ class Transform:
                                 for col in remaining_base_cols
                                 if base_questions[col] == match
                             )
-                            matched_type = self.database.meta.readstat_variable_types[
+                            matched_type = database_meta.readstat_variable_types[
                                 matched_col
                             ]
                             if (best_match is None or score >= best_score) and (
@@ -243,9 +245,7 @@ class Transform:
 
                             if (
                                 best_score > 70
-                                and self.database.meta.readstat_variable_types[
-                                    matched_col
-                                ]
+                                and database_meta.readstat_variable_types[matched_col]
                                 == meta.readstat_variable_types[old_col]
                             ):
                                 question_mapping[old_col] = matched_col
@@ -259,12 +259,19 @@ class Transform:
             df.rename(columns=question_mapping, inplace=True)
             df["year"] = year
 
-            df = df.reindex(columns=self.database.df.columns, fill_value=None)
+            df = df.reindex(columns=database_df.columns, fill_value=None)
 
             merged_dfs.append(df)
 
-        df_combined = pl.concat(merged_dfs, ignore_index=True)
-        self.database.df = df_combined
+        df_combined = pl.concat(merged_dfs, how="vertical")
+        database_df = df_combined
+        pystat.write_sav(
+            database_df.to_pandas(),
+            new_path,
+            column_labels=database_meta.column_names_to_labels,
+            variable_value_labels=database_meta.variable_value_labels,
+        )
+
         return df_combined
 
     def map_2(self, old_df_paths: list) -> pl.DataFrame:
