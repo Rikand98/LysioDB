@@ -127,8 +127,8 @@ class Transform:
         merged_dfs = [database_df]
 
         for year, path in old_database_paths:
-            df, meta = pystat.read_sav(path)
-            df = df.loc[:, ~df.columns.duplicated()]
+            df_pd, meta = pystat.read_sav(path)
+            df = pl.from_pandas(df_pd)
 
             old_questions = meta.column_names_to_labels
 
@@ -256,14 +256,15 @@ class Transform:
                                     f"{year} - {old_col}: {old_label} did not find a strong match"
                                 )
 
-            df.rename(columns=question_mapping, inplace=True)
-            df["year"] = year
-
-            df = df.reindex(columns=database_df.columns, fill_value=None)
+            df = (
+                df.rename(question_mapping)
+                .select(question_mapping.values())
+                .with_columns(pl.lit(year).alias("year"))
+            )
 
             merged_dfs.append(df)
 
-        df_combined = pl.concat(merged_dfs, how="vertical")
+        df_combined = pl.concat(merged_dfs, how="diagonal")
         database_df = df_combined
         pystat.write_sav(
             database_df.to_pandas(),
@@ -273,46 +274,3 @@ class Transform:
         )
 
         return df_combined
-
-    def map_2(self, old_df_paths: list) -> pl.DataFrame:
-        """Standardizes old datasets and merges them."""
-        print("\n--- Start mapping and renaming of data ---")
-        base_questions = self.database.meta.column_names_to_labels
-        self.database.df["year"] = "2025"
-        merged_dfs = [self.database.df]
-
-        for year, path in old_df_paths:
-            df, meta = pystat.read_sav(path)
-            df = df.loc[:, ~df.columns.duplicated()]
-            question_mapping = self._get_question_mapping(df, meta, base_questions)
-
-            df.rename(columns=question_mapping, inplace=True)
-            df["year"] = year
-            print(df)
-            df = df.reindex(columns=self.database.df.columns, fill_value=None)
-            merged_dfs.append(df)
-
-        print("\n--- Finished ---")
-        return pl.concat(merged_dfs, ignore_index=True)
-
-    def _get_question_mapping(
-        self, df: pl.DataFrame, meta, base_questions: dict
-    ) -> dict:
-        """Maps old columns to new base columns using question labels."""
-
-        question_mapping = {}
-        old_questions = meta.column_names_to_labels
-        remaining_base_cols = set(base_questions.keys()) - set(df.columns)
-
-        for old_col, old_label in old_questions.items():
-            if old_label and old_col not in question_mapping:
-                matches = process.extract(
-                    old_label,
-                    [base_questions[col] for col in remaining_base_cols],
-                    scorer=fuzz.partial_ratio,
-                    limit=10,
-                )
-                best_match, best_score = max(matches, key=lambda x: x[1])
-                if best_score > 70:
-                    question_mapping[old_col] = best_match
-        return question_mapping
