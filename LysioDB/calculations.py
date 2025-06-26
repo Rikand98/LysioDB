@@ -130,7 +130,7 @@ class Calculations:
                 "Warning: Weighting requested but weight column not available. Calculating unweighted percentages."
             )
 
-        category_cols = list(self.database.config.category_map.keys())
+        category_cols = self.database.category_df.columns[1:]
         question_cols = self.database.question_df["question"].to_list()
 
         cols_to_select = category_cols + question_cols
@@ -1056,7 +1056,7 @@ class Calculations:
             print("\n--- calculations done ---")
             return self.database.index
 
-        if not self.database.config.category_map:
+        if not self.database.category_df:
             print("Calculating overall index.")
             df_long = df_clean.select(
                 [weight_column] + questions_present if weights else questions_present
@@ -1099,7 +1099,7 @@ class Calculations:
             return self.database.index
 
         print("Calculating category-based index.")
-        categories = list(self.database.config.category_map.keys())
+        categories = self.database.category_df.columns[1:]
 
         results_list = []
 
@@ -1436,7 +1436,7 @@ class Calculations:
             )
             return self.database.correlation_df
 
-        category_cols = list(self.database.config.category_map.keys())
+        category_cols = self.database.category_df.columns[1:]
         category_cols_present = [col for col in category_cols if col in df.columns]
 
         if not category_cols_present:
@@ -1694,7 +1694,7 @@ class Calculations:
             return self.database.index
 
         print("Calculating category-based ENI.")
-        categories = list(self.database.config.category_map.keys())
+        categories = self.database.category_df.columns[1:]
 
         results_list = []
 
@@ -1803,7 +1803,7 @@ class Calculations:
             .alias("grouped_answer_value")
         )
         agg_expressions = [
-            pl.sum(col).alias(col) for col in self.database.config.category_map.keys()
+            pl.sum(col).alias(col) for col in self.database.category_df.columns[1:]
         ]
         recoded_df = (
             df.group_by("question", grouped_answer_expr, "metric_type")

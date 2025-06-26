@@ -12,7 +12,6 @@ class Config:
         base_grid_pattern=None,
         single_choice_pattern=None,
         nan_values=None,
-        category_map=None,
         question_map=None,
         area_map=None,
         year_map=None,
@@ -37,16 +36,6 @@ class Config:
             )
 
         self.NAN_VALUES = nan_values or {999: None}
-
-        self.category_map = category_map or {
-            "Totalt": {
-                "type": "total",
-                "column": "Totalt",
-                "value_labels": {
-                    1: "Totalt",
-                },
-            },
-        }
 
         self.question_map = question_map or {}
         self.area_map = area_map or {}

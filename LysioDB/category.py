@@ -1,19 +1,5 @@
 import polars as pl
-
-
-def _eval_polars_expr_string(expr_string, df):
-    """Evaluates a string as a Polars expression against a DataFrame."""
-    try:
-        evaluated_expr = eval(expr_string, {"pl": pl, "df": df})
-        if not isinstance(evaluated_expr, pl.Expr):
-            print(
-                f"Warning: Evaluated string '{expr_string}' did not result in a Polars Expression."
-            )
-            return pl.lit(False)
-        return evaluated_expr
-    except Exception as e:
-        print(f"Error evaluating Polars expression string '{expr_string}': {e}")
-        return pl.lit(False)
+from typing import Dict, List, Union
 
 
 class Category:
@@ -21,91 +7,94 @@ class Category:
         self.database = database
         print("Initialization of Category object complete.")
 
-    def create_categories(self):
+    def create_categories(self, category_data: Dict) -> pl.DataFrame:
         """
-        Optimized categorization method using vectorized Polars operations.
-        Creates new category columns based on config and updates metadata.
+        Fixed vectorized processing with proper label handling.
+        Resolves the ShapeError while maintaining your structure.
         """
-        print("\n--- Creating Categories ---")
+        base = {
+            "label": ["category", "condition"],
+            "totalt": ["total", "1==1"],
+        }
+        full_data = {**base, **category_data}
+        category_df = pl.DataFrame(full_data)
+        self.database.category_df = category_df
 
-        new_columns_expressions = []
-        new_category_metadata = {}
+        labels = pl.Series(category_df.columns)[1:]  # Skip 'label' column
+        types = pl.Series(category_df.filter(pl.col("label") == "category").row(0)[1:])
+        conditions = pl.Series(
+            category_df.filter(pl.col("label") == "condition").row(0)[1:]
+        )
 
-        for category, config in self.database.config.category_map.items():
-            cat_type = config.get("type")
-            new_column_expr = None
+        exprs = []
 
-            new_category_metadata[category] = {
-                "name_label": config.get("name_labels", category),
-                "variable_type": config.get("variable_type", "unknown"),
-                "value_labels": config.get("value_labels", {}),
-            }
+        expand_mask = types.is_in(["column", "unique"])
+        if expand_mask.any():
+            source_cols = (
+                conditions.filter(expand_mask).str.extract(r"col\('(\w+)'\)").to_list()
+            )
 
-            if cat_type == "total":
-                new_column_expr = pl.lit(1).alias(category)
-                new_category_metadata[category]["variable_type"] = "int"
-
-            elif cat_type == "conditional":
-                default_value = config.get("default", None)
-                conditions_list = config.get("conditions")
-
-                if conditions_list:
-                    conditional_expr = pl.lit(default_value)
-                    for condition_cfg in reversed(conditions_list):
-                        condition_string = condition_cfg.get("conditions")
-                        value_to_assign = condition_cfg.get("value")
-
-                        if condition_string is not None and value_to_assign is not None:
-                            condition_polars_expr = _eval_polars_expr_string(
-                                condition_string, self.database.df
-                            )
-
-                            if isinstance(condition_polars_expr, pl.Expr):
-                                conditional_expr = (
-                                    pl.when(condition_polars_expr)
-                                    .then(pl.lit(value_to_assign))
-                                    .otherwise(conditional_expr)
-                                )
-                            else:
-                                print(
-                                    f"Warning: Conditional category '{category}' condition '{condition_string}' did not evaluate to a boolean expression. Skipping this condition."
-                                )
-                        else:
-                            print(
-                                f"Warning: Conditional category '{category}' has an incomplete condition configuration. Skipping."
-                            )
-
-                    new_column_expr = conditional_expr.alias(category)
-
-                else:
-                    print(
-                        f"Warning: Conditional category '{category}' has no conditions defined. Skipping."
-                    )
-
-            if new_column_expr is not None:
-                new_columns_expressions.append(new_column_expr)
-
-        if new_columns_expressions:
-            self.database.df = self.database.df.with_columns(new_columns_expressions)
-        else:
-            print("No valid category columns to add to DataFrame.")
-
-        for category, meta_info in new_category_metadata.items():
-            if category in self.database.df.columns:
-                self.database.meta.column_names.append(category)
-                self.database.meta.column_labels.append(meta_info["name_label"])
-                self.database.meta.readstat_variable_types[category] = meta_info[
-                    "variable_type"
-                ]
-                self.database.meta.variable_value_labels[category] = meta_info[
-                    "value_labels"
-                ]
-            else:
-                print(
-                    f"Metadata for category '{category}' not added as column was skipped."
+            for col, src_col in zip(labels.filter(expand_mask), source_cols):
+                unique_values = (
+                    self.database.df.lazy()
+                    .select(pl.col(src_col).unique())
+                    .collect()
+                    .to_series()
+                    .drop_nulls()
                 )
 
-        self.database.df = self.database.df
-        print("\n--- Categories created and metadata updated ---")
+                cat_type = (
+                    category_df.filter(pl.col("label") == "category")
+                    .select(pl.col(col))
+                    .item(0, 0)
+                )
+                if cat_type == "column":
+                    value_labels = self.database.metadata.get_value_labels(src_col)
+                    for val in unique_values:
+                        val_label = value_labels.get(val, str(val))
+                        name = f"{col}_{val_label.lower()}"
+                        exprs.append(
+                            pl.when(pl.col(src_col) == val)
+                            .then(1)
+                            .otherwise(None)
+                            .cast(pl.Int32)
+                            .alias(name)
+                        )
+
+                elif cat_type == "unique":
+                    for val in unique_values:
+                        name = f"{col}_{str(val).lower()}"
+                        exprs.append(
+                            pl.when(pl.col(src_col) == val)
+                            .then(1)
+                            .otherwise(None)
+                            .cast(pl.Int32)
+                            .alias(name)
+                        )
+
+        total_mask = types == "total"
+        if total_mask.any():
+            exprs.extend(
+                pl.lit(1).cast(pl.Int32).alias(col) for col in labels.filter(total_mask)
+            )
+
+        single_mask = types == "single"
+        if single_mask.any():
+            # Evaluate conditions and create expressions
+            for col, cond in zip(
+                labels.filter(single_mask), conditions.filter(single_mask)
+            ):
+                try:
+                    expr = eval(cond, {"pl": pl})
+                    exprs.append(
+                        pl.when(expr).then(1).otherwise(None).cast(pl.Int32).alias(col)
+                    )
+                except Exception as e:
+                    print(f"Error processing {col}: {e}")
+
+        if exprs:
+            df = self.database.df.with_columns(exprs)
+            self.database.df = df
+            return df
 
         return self.database.df
