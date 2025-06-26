@@ -1,4 +1,3 @@
-from types import prepare_class
 import pandas as pd
 import polars as pl
 from ipfn import ipfn

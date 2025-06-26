@@ -1,5 +1,4 @@
 import polars as pl
-from typing import Dict, List, Union
 
 
 class Category:
