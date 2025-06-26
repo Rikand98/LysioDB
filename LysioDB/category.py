@@ -52,7 +52,7 @@ class Category:
                     value_labels = self.database.metadata.get_value_labels(src_col)
                     for val in unique_values:
                         val_label = value_labels.get(val, str(val))
-                        name = f"{col}_{val_label.lower()}"
+                        name = f"{col}_{val_label}"
                         exprs.append(
                             pl.when(pl.col(src_col) == val)
                             .then(1)
@@ -63,7 +63,7 @@ class Category:
 
                 elif cat_type == "unique":
                     for val in unique_values:
-                        name = f"{col}_{str(val).lower()}"
+                        name = f"{col}_{str(val)}"
                         exprs.append(
                             pl.when(pl.col(src_col) == val)
                             .then(1)
@@ -80,7 +80,6 @@ class Category:
 
         single_mask = types == "single"
         if single_mask.any():
-            # Evaluate conditions and create expressions
             for col, cond in zip(
                 labels.filter(single_mask), conditions.filter(single_mask)
             ):
