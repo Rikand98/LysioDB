@@ -7,7 +7,7 @@ class Category:
         print("Initialization of Category object complete.")
 
     def create_categories(self) -> pl.DataFrame:
-        print("\n --- Creating Categories ---")
+        print("\n--- Creating categories ---")
         base = {
             "label": ["category", "condition"],
             "totalt": ["total", "1==1"],
@@ -60,7 +60,6 @@ class Category:
 
                 elif cat_type == "unique":
                     for val in unique_values:
-                        print(val)
                         exprs.append(
                             pl.when(pl.col(src_col) == val)
                             .then(1)
@@ -95,7 +94,7 @@ class Category:
             df = self.database.df.with_columns(exprs)
             self.database.categories = pl.Series("Categories", catagories)
             self.database.df = df
+            print("\n--- Categories created ---")
             return df
 
-        print("\n --- Categories Created ---")
         return self.database.df
