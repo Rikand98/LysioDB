@@ -7,10 +7,7 @@ class Category:
         print("Initialization of Category object complete.")
 
     def create_categories(self) -> pl.DataFrame:
-        """
-        Fixed vectorized processing with proper label handling.
-        Resolves the ShapeError while maintaining your structure.
-        """
+        print("\n --- Creating Categories ---")
         base = {
             "label": ["category", "condition"],
             "totalt": ["total", "1==1"],
@@ -100,4 +97,5 @@ class Category:
             self.database.df = df
             return df
 
+        print("\n --- Categories Created ---")
         return self.database.df
