@@ -130,7 +130,7 @@ class Calculations:
                 "Warning: Weighting requested but weight column not available. Calculating unweighted percentages."
             )
 
-        category_cols = self.database.category_df.columns[1:]
+        category_cols = self.database.categories.to_list()
         question_cols = self.database.question_df["question"].to_list()
 
         cols_to_select = category_cols + question_cols
@@ -1056,7 +1056,7 @@ class Calculations:
             print("\n--- calculations done ---")
             return self.database.index
 
-        if not self.database.category_df:
+        if self.database.categories.is_empty():
             print("Calculating overall index.")
             df_long = df_clean.select(
                 [weight_column] + questions_present if weights else questions_present
@@ -1099,7 +1099,7 @@ class Calculations:
             return self.database.index
 
         print("Calculating category-based index.")
-        categories = self.database.category_df.columns[1:]
+        categories = self.database.categories
 
         results_list = []
 
@@ -1436,7 +1436,7 @@ class Calculations:
             )
             return self.database.correlation_df
 
-        category_cols = self.database.category_df.columns[1:]
+        category_cols = self.database.categories
         category_cols_present = [col for col in category_cols if col in df.columns]
 
         if not category_cols_present:
@@ -1694,7 +1694,7 @@ class Calculations:
             return self.database.index
 
         print("Calculating category-based ENI.")
-        categories = self.database.category_df.columns[1:]
+        categories = self.database.categories
 
         results_list = []
 
@@ -1802,9 +1802,7 @@ class Calculations:
             .otherwise(pl.lit("Other"))
             .alias("grouped_answer_value")
         )
-        agg_expressions = [
-            pl.sum(col).alias(col) for col in self.database.category_df.columns[1:]
-        ]
+        agg_expressions = [pl.sum(col).alias(col) for col in self.database.categories]
         recoded_df = (
             df.group_by("question", grouped_answer_expr, "metric_type")
             .agg(*agg_expressions)

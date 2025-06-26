@@ -18,15 +18,15 @@ class Category:
         }
         full_data = {**base, **self.database.config.category_data}
         category_df = pl.DataFrame(full_data)
-        self.database.category_df = category_df
 
-        labels = pl.Series(category_df.columns)[1:]  # Skip 'label' column
+        labels = pl.Series(category_df.columns)[1:]
         types = pl.Series(category_df.filter(pl.col("label") == "category").row(0)[1:])
         conditions = pl.Series(
             category_df.filter(pl.col("label") == "condition").row(0)[1:]
         )
 
         exprs = []
+        catagories = []
 
         expand_mask = types.is_in(["column", "unique"])
         if expand_mask.any():
@@ -60,23 +60,26 @@ class Category:
                             .cast(pl.Int32)
                             .alias(name)
                         )
+                        catagories.append(name)
 
                 elif cat_type == "unique":
                     for val in unique_values:
-                        name = f"{col}_{str(val)}"
+                        print(val)
                         exprs.append(
                             pl.when(pl.col(src_col) == val)
                             .then(1)
                             .otherwise(None)
                             .cast(pl.Int32)
-                            .alias(name)
+                            .alias(str(val))
                         )
+                        catagories.append(str(val))
 
         total_mask = types == "total"
         if total_mask.any():
             exprs.extend(
                 pl.lit(1).cast(pl.Int32).alias(col) for col in labels.filter(total_mask)
             )
+            catagories.append("totalt")
 
         single_mask = types == "single"
         if single_mask.any():
@@ -88,11 +91,13 @@ class Category:
                     exprs.append(
                         pl.when(expr).then(1).otherwise(None).cast(pl.Int32).alias(col)
                     )
+                    catagories.append(col)
                 except Exception as e:
                     print(f"Error processing {col}: {e}")
 
         if exprs:
             df = self.database.df.with_columns(exprs)
+            self.database.categories = pl.Series("Categories", catagories)
             self.database.df = df
             return df
 
