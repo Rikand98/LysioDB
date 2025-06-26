@@ -12,6 +12,7 @@ class Config:
         base_grid_pattern=None,
         single_choice_pattern=None,
         nan_values=None,
+        category_data=None,
         question_map=None,
         area_map=None,
         year_map=None,
@@ -37,6 +38,7 @@ class Config:
 
         self.NAN_VALUES = nan_values or {999: None}
 
+        self.category_data = category_data or {}
         self.question_map = question_map or {}
         self.area_map = area_map or {}
         self.year_map = year_map or {}

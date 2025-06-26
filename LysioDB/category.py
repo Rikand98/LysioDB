@@ -7,7 +7,7 @@ class Category:
         self.database = database
         print("Initialization of Category object complete.")
 
-    def create_categories(self, category_data: Dict) -> pl.DataFrame:
+    def create_categories(self) -> pl.DataFrame:
         """
         Fixed vectorized processing with proper label handling.
         Resolves the ShapeError while maintaining your structure.
@@ -16,7 +16,7 @@ class Category:
             "label": ["category", "condition"],
             "totalt": ["total", "1==1"],
         }
-        full_data = {**base, **category_data}
+        full_data = {**base, **self.database.config.category_data}
         category_df = pl.DataFrame(full_data)
         self.database.category_df = category_df
 
