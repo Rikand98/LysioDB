@@ -9,7 +9,7 @@ class Category:
     def create_categories(self) -> pl.DataFrame:
         print("\n--- Creating categories ---")
         base = {
-            "label": ["category", "condition"],
+            "label": ["category", "column"],
             "totalt": ["total", "1==1"],
         }
         full_data = {**base, **self.database.config.category_data}
@@ -17,20 +17,16 @@ class Category:
 
         labels = pl.Series(category_df.columns)[1:]
         types = pl.Series(category_df.filter(pl.col("label") == "category").row(0)[1:])
-        conditions = pl.Series(
-            category_df.filter(pl.col("label") == "condition").row(0)[1:]
-        )
+        columns = pl.Series(category_df.filter(pl.col("label") == "column").row(0)[1:])
 
         exprs = []
-        catagories = []
+        categories = []
 
-        expand_mask = types.is_in(["column", "unique"])
-        if expand_mask.any():
-            source_cols = (
-                conditions.filter(expand_mask).str.extract(r"col\('(\w+)'\)").to_list()
-            )
+        column_unique_mask = types.is_in(["column", "unique"])
+        if column_unique_mask.any():
+            source_cols = columns.filter(column_unique_mask).to_list()
 
-            for col, src_col in zip(labels.filter(expand_mask), source_cols):
+            for col, src_col in zip(labels.filter(column_unique_mask), source_cols):
                 unique_values = (
                     self.database.df.lazy()
                     .select(pl.col(src_col).unique())
@@ -56,7 +52,7 @@ class Category:
                             .cast(pl.Int32)
                             .alias(name)
                         )
-                        catagories.append(name)
+                        categories.append(name)
 
                 elif cat_type == "unique":
                     for val in unique_values:
@@ -67,32 +63,58 @@ class Category:
                             .cast(pl.Int32)
                             .alias(str(val))
                         )
-                        catagories.append(str(val))
+                        categories.append(str(val))
+
+        double_mask = types == "double"
+        if double_mask.any():
+            for col in labels.filter(double_mask):
+                cols = (
+                    category_df.filter(pl.col("label").is_in(["column"]))
+                    .select(pl.col(col))
+                    .item(0, 0)
+                )
+                col1 = cols.split(":")[0]
+                col2 = cols.split(":")[1]
+                unique_combinations = (
+                    self.database.df.lazy().select([col1, col2]).unique().collect()
+                )
+
+                for row in unique_combinations.iter_rows():
+                    val1, val2 = row
+                    name = f"{val1}:{val2}"
+                    exprs.append(
+                        pl.when((pl.col(col1) == val1) & (pl.col(col2) == val2))
+                        .then(1)
+                        .otherwise(None)
+                        .cast(pl.Int32)
+                        .alias(name)
+                    )
+                    categories.append(name)
 
         total_mask = types == "total"
         if total_mask.any():
             exprs.extend(
                 pl.lit(1).cast(pl.Int32).alias(col) for col in labels.filter(total_mask)
             )
-            catagories.append("totalt")
+            categories.append("totalt")
 
         single_mask = types == "single"
         if single_mask.any():
             for col, cond in zip(
-                labels.filter(single_mask), conditions.filter(single_mask)
+                labels.filter(single_mask), columns.filter(single_mask)
             ):
                 try:
                     expr = eval(cond, {"pl": pl})
                     exprs.append(
                         pl.when(expr).then(1).otherwise(None).cast(pl.Int32).alias(col)
                     )
-                    catagories.append(col)
+                    categories.append(col)
                 except Exception as e:
                     print(f"Error processing {col}: {e}")
 
         if exprs:
             df = self.database.df.with_columns(exprs)
-            self.database.categories = pl.Series("Categories", catagories)
+            self.database.categories = pl.Series("Categories", categories)
             self.database.df = df
             print("\n--- Categories created ---")
             return df

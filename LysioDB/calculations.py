@@ -13,6 +13,107 @@ class Calculations:
 
         print("Initialization of Calculations object complete.")
 
+    def weights_test(
+        self, file_name: str, target_columns: list, df_columns: list
+    ) -> pl.DataFrame:
+        """
+        Vectorized Iterative Proportional Fitting implementation in Polars.
+        Handles multiple dimensions (gender, area, age) with proper weighting.
+        """
+        print("\n--- Starting Polars IPF Weight Calculation ---")
+
+        # 1. Load and prepare target data
+        target_df = (
+            pl.read_excel(file_name)
+            .melt(id_vars=["Område", "Ålder"], value_vars=["Kvinna", "Man"])
+            .rename({"variable": "Kön", "value": "population"})
+        )
+
+        # 2. Prepare survey data with mapped values
+        survey_df = self.database.df.with_columns(
+            pl.col(col)
+            # .map_dict(self.database.meta.variable_value_labels.get(col, {}))
+            .alias(f"{col}_mapped")
+            for col in df_columns
+        )
+
+        # 3. Create initial weight matrix (1.0 for all)
+        weight_df = survey_df.with_columns(pl.lit(1.0).alias("weight"))
+
+        # 4. Get unique values for each dimension
+        dimensions = {
+            col: survey_df.select(pl.col(f"{col}_mapped")).unique().to_series()
+            for col in df_columns
+        }
+
+        # 5. Create target marginals structure
+        target_marginals = {}
+        for col in df_columns:
+            # Get corresponding target column name
+            target_col = next(tc for tc in target_columns if tc.lower() in col.lower())
+
+            target_marginals[col] = (
+                target_df.group_by(target_col)
+                .agg(pl.col("population").sum())
+                .to_dict(as_series=False)
+            )
+
+        # 6. IPF Iteration
+        max_iterations = 10
+        tolerance = 1e-6
+        converged = False
+
+        for iteration in range(max_iterations):
+            prev_weights = weight_df["weight"].clone()
+
+            # Adjust weights for each dimension
+            for col in df_columns:
+                # Calculate current marginal sums
+                current_marginals = (
+                    weight_df.lazy()
+                    .group_by(f"{col}_mapped")
+                    .agg(pl.col("weight").sum())
+                    .collect()
+                    .to_dict(as_series=False)
+                )
+
+                # Calculate adjustment factors
+                adj_factors = {
+                    val: (target / current) if current > 0 else 1.0
+                    for val, target, current in zip(
+                        target_marginals[col][target_col],
+                        target_marginals[col]["population"],
+                        current_marginals["weight"],
+                    )
+                }
+
+                # Apply adjustments
+                weight_df = weight_df.with_columns(
+                    pl.col("weight") * pl.col(f"{col}_mapped").map_dict(adj_factors)
+                )
+
+            # Check convergence
+            weight_diff = (weight_df["weight"] - prev_weights).abs().max()
+            if weight_diff < tolerance:
+                converged = True
+                break
+
+        print(
+            f"\nConverged after {iteration + 1} iterations"
+            if converged
+            else f"Stopped after {max_iterations} iterations (diff: {weight_diff})"
+        )
+
+        # 7. Merge weights back to original data
+        result_df = (
+            self.database.df.with_columns(
+                weight_df["weight"].alias("weight")
+            ).with_columns(pl.col("weight").fill_null(1.0))  # Fill any NAs with 1.0
+        )
+
+        print("\n--- Weight calculation complete ---")
+        return result_df
+
     def weights(self, file_name, target_columns: list, df_columns: list):
         """
 
@@ -136,7 +237,8 @@ class Calculations:
         if use_weights:
             cols_to_select.append(self.database.config.WEIGHT_COLUMN)
 
-        df_calc = self.database.df.select(cols_to_select, strict=False)
+        # df_calc = self.database.df.select(cols_to_select, strict=False)
+        df_calc = self.database.df.clone()
 
         nan_values_config = self.database.config.NAN_VALUES
 

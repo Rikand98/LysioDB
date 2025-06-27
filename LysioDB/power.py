@@ -88,7 +88,7 @@ class Power:
                             try:
                                 result_value = (
                                     self.database.index_df.filter(
-                                        pl.col("Category") == category
+                                        pl.col("Category") == category_label
                                     )
                                     .select(pl.col(area_name).round(2))
                                     .item(0, 0)
@@ -153,7 +153,7 @@ class Power:
                                 try:
                                     result_value = (
                                         self.database.index_df.filter(
-                                            pl.col("Category") == category
+                                            pl.col("Category") == category_label
                                         )
                                         .select(pl.col(question).round(2))
                                         .item(0, 0)
@@ -187,7 +187,7 @@ class Power:
                             try:
                                 result_value = (
                                     self.database.index_df.filter(
-                                        pl.col("Category") == category
+                                        pl.col("Category") == category_label
                                     )
                                     .select(pl.col(area_name).round(2))
                                     .item(0, 0)
@@ -230,7 +230,7 @@ class Power:
                             print(
                                 f"Warning: Could not find nan_percentage for {placeholder} in category '{category}' ({e})"
                             )
-                            self._update_cell_text(cell, "N/A")
+                            self._update_cell_text(cell, "0%")
 
                     if count_match:
                         question_part = count_match.group(0).split(":")[-1]
@@ -242,6 +242,7 @@ class Power:
                                     (pl.col("question") == question_part)
                                     & (pl.col("metric_type") == "count")
                                     & (pl.col("answer_value") != "nan")
+                                    & (pl.col("answer_value") != "total")
                                 )
                                 .select(pl.col(f"{year}:{category}"))
                                 .sum()
@@ -389,7 +390,6 @@ class Power:
                 for i, suffix in enumerate(template_val_name_suffixes):
                     try:
                         series_label = all_value_labels[0].get(str(float(i) + 1))
-                        print(series_label)
 
                         series_data = [row[i] for row in all_series_values]
 
@@ -427,10 +427,10 @@ class Power:
                         .select("Correlation")
                         .item(0, 0)
                     )
-                    if np.isnan(corr) or corr <= 0:
+                    if corr is None or corr <= 0:
                         corr = 0
-                    if np.isnan(index):
-                        index_value = 0
+                    if index is None:
+                        index = 0
 
                     all_corr_values.append(corr)
                     all_index_values.append(index)
@@ -514,7 +514,7 @@ class Power:
                     .select("Correlation")
                     .item(0, 0)
                 )
-                if np.isnan(corr) or np.isnan(index):
+                if (corr is None) or (index is None):
                     continue
                 else:
                     all_index.append(index)
