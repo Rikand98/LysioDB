@@ -118,36 +118,55 @@ class Export:
         else:
             print("No data to write to Excel. File not created.")
 
-    def sav(self, file_path="exported_databas.sav"):
-        """Export processed DataFrame back to .sav format, removing 'direct' category columns and their metadata."""
+    def sav(self, file_path="exported_database.sav", create_column=None):
+        """Export processed DataFrame with grouped category columns."""
+        df = self.database.df.clone()
 
-        direct_columns = {
-            category
-            for category, config in self.database.config.category_map.items()
-            if config.get("type") == "direct"
-        }
+        if create_column:
+            for new_col, source_cols in create_column.items():
+                value_mapping = {}
+                current_value = 1
 
-        filtered_df = self.database.df.drop(
-            [col for col in direct_columns if col in self.database.df.columns]
-        )
+                for col in source_cols:
+                    value_mapping[col] = current_value
+                    current_value += 1
 
-        filtered_column_labels = {
+                expr = pl.coalesce(
+                    *[
+                        pl.when(pl.col(col) == 1).then(pl.lit(value_mapping.get(col)))
+                        for col in source_cols
+                    ]
+                )
+
+                df = df.with_columns(expr.alias(new_col)).drop(source_cols)
+
+                if hasattr(self.database.meta, "column_names"):
+                    self.database.meta.column_names.append(new_col)
+                    self.database.meta.column_labels.append(new_col)
+                if hasattr(self.database.meta, "variable_value_labels"):
+                    self.database.meta.variable_value_labels[new_col] = {
+                        v: k for k, v in value_mapping.items()
+                    }
+                if hasattr(self.database.meta, "readstat_variable_types"):
+                    self.database.meta.readstat_variable_types[new_col] = "F8"
+
+        column_labels = {
             col: label
             for col, label in self.database.meta.column_names_to_labels.items()
-            if col not in direct_columns
+            # if col in df.columns
         }
 
-        filtered_variable_value_labels = {
+        variable_value_labels = {
             col: labels
             for col, labels in self.database.meta.variable_value_labels.items()
-            if col not in direct_columns
+            # if col in df.columns
         }
 
         pystat.write_sav(
-            filtered_df.to_pandas(),
+            df.to_pandas(),
             file_path,
-            column_labels=filtered_column_labels,
-            variable_value_labels=filtered_variable_value_labels,
+            column_labels=column_labels,
+            variable_value_labels=variable_value_labels,
         )
 
         print(f"Database exported to: {file_path}")
