@@ -3,6 +3,11 @@ import pptx
 import re
 import numpy as np
 import polars as pl
+from typing import Dict, Tuple, List
+from pptx import Presentation
+from pptx.util import Pt
+from pptx.dml.color import RGBColor
+from pptx.enum.text import PP_ALIGN
 from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.enum.chart import XL_CHART_TYPE
 from pptx.chart.chart import Chart
@@ -23,6 +28,22 @@ class Power:
         self.max_corr = None
         self.min_index = None
         self.max_index = None
+
+    def tabel_min_max(
+        self, length: int, ppt_path: str, output_path: str = "output.pptx"
+    ):
+        """Generate a PowerPoint with highlighted min/max percentages in tables."""
+        print("\n--- Start generating PowerPoint ---")
+
+        prs = Presentation(ppt_path)
+
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if shape.has_table:
+                    self._process_table(shape.table, length)
+
+        prs.save(output_path)
+        print(f"Generated PowerPoint in {output_path}")
 
     def update_pptx(self, category, template_path, output_dir="output_ppts"):
         """Generate a PowerPoint for each unique category."""
@@ -532,3 +553,65 @@ class Power:
         self.min_corr = min(all_corr)
         self.min_index = min(all_index)
         self.max_index = max(all_index)
+
+    def _process_table(self, table, length: int) -> None:
+        """Process all cells in a table to highlight min/max values."""
+        table_values = self._collect_table_values(table, length)
+
+        for row_idx, row_data in table_values.items():
+            min_vals, max_vals = row_data
+            for col_idx, cell in enumerate(table.rows[row_idx].cells):
+                self._format_cell_if_extreme(cell, min_vals, max_vals, length)
+
+    def _collect_table_values(
+        self, table, length: int
+    ) -> Dict[int, Tuple[List[float], List[float]]]:
+        """Collect all percentage values and calculate min/max for each row."""
+        table_values = {}
+
+        for row_idx, row in enumerate(table.rows):
+            values = []
+            for cell in row.cells:
+                if match := re.match(r"(\d+)%", cell.text):
+                    values.append(float(match.group(1)))
+
+            if len(values) > 1:
+                sorted_values = sorted(values)
+                table_values[row_idx] = (
+                    sorted_values[:length],
+                    sorted_values[-length:],
+                )
+            else:
+                table_values[row_idx] = ([], [])
+
+        return table_values
+
+    def _format_cell_if_extreme(
+        self, cell, min_vals: List[float], max_vals: List[float], length: int
+    ) -> None:
+        """Format cell if it contains a min or max value."""
+        if match := re.match(r"(\d+)%", cell.text):
+            numeric_value = float(match.group(1))
+
+            if numeric_value in min_vals:
+                self._format_cell(cell, f"• {cell.text}", RGBColor(240, 120, 100))
+            elif numeric_value in max_vals:
+                self._format_cell(cell, f"• {cell.text}", RGBColor(125, 186, 116))
+
+    def _format_cell(self, cell, text: str, color: RGBColor) -> None:
+        """Apply consistent formatting to a cell."""
+        cell.text = text
+        text_frame = cell.text_frame
+        paragraph = text_frame.paragraphs[0]
+
+        for run in paragraph.runs:
+            run.text = ""
+
+        run = paragraph.add_run()
+        run.text = text
+        paragraph.alignment = PP_ALIGN.CENTER
+
+        font = run.font
+        font.size = Pt(12)
+        font.bold = True
+        font.color.rgb = color
