@@ -17,8 +17,7 @@ class Calculations:
         self, file_name: str, target_columns: list, df_columns: list
     ) -> pl.DataFrame:
         """
-        Vectorized Iterative Proportional Fitting implementation in Polars.
-        Handles multiple dimensions (gender, area, age) with proper weighting.
+        Vectorized IPF using map_batches for better performance.
         """
         print("\n--- Starting Polars IPF Weight Calculation ---")
 
@@ -29,70 +28,70 @@ class Calculations:
             .rename({"variable": "Kön", "value": "population"})
         )
 
-        # 2. Prepare survey data with mapped values
+        # 2. Prepare survey data with mapped columns
         survey_df = self.database.df.with_columns(
-            pl.col(col)
-            # .map_dict(self.database.meta.variable_value_labels.get(col, {}))
-            .alias(f"{col}_mapped")
-            for col in df_columns
+            [pl.col(col).alias(f"{col}_mapped") for col in df_columns]
         )
 
-        # 3. Create initial weight matrix (1.0 for all)
+        # 3. Initialize weights
         weight_df = survey_df.with_columns(pl.lit(1.0).alias("weight"))
 
-        # 4. Get unique values for each dimension
-        dimensions = {
-            col: survey_df.select(pl.col(f"{col}_mapped")).unique().to_series()
-            for col in df_columns
+        # 4. Pre-compute target marginals
+        target_marginals = {
+            col: target_df.lazy()
+            .group_by(target_col)
+            .agg(pl.col("population").sum())
+            .collect()
+            .to_dict(as_series=False)
+            for col, target_col in zip(df_columns, target_columns)
         }
 
-        # 5. Create target marginals structure
-        target_marginals = {}
-        for col in df_columns:
-            # Get corresponding target column name
-            target_col = next(tc for tc in target_columns if tc.lower() in col.lower())
-
-            target_marginals[col] = (
-                target_df.group_by(target_col)
-                .agg(pl.col("population").sum())
-                .to_dict(as_series=False)
-            )
-
-        # 6. IPF Iteration
-        max_iterations = 10
+        # 5. IPF Iteration
+        max_iterations = 1000
         tolerance = 1e-6
         converged = False
 
         for iteration in range(max_iterations):
             prev_weights = weight_df["weight"].clone()
 
-            # Adjust weights for each dimension
-            for col in df_columns:
-                # Calculate current marginal sums
+            for col, target_col in zip(df_columns, target_columns):
                 current_marginals = (
                     weight_df.lazy()
                     .group_by(f"{col}_mapped")
                     .agg(pl.col("weight").sum())
+                    .drop_nans()
                     .collect()
                     .to_dict(as_series=False)
                 )
-
-                # Calculate adjustment factors
-                adj_factors = {
-                    val: (target / current) if current > 0 else 1.0
-                    for val, target, current in zip(
-                        target_marginals[col][target_col],
-                        target_marginals[col]["population"],
-                        current_marginals["weight"],
-                    )
-                }
-
-                # Apply adjustments
-                weight_df = weight_df.with_columns(
-                    pl.col("weight") * pl.col(f"{col}_mapped").map_dict(adj_factors)
+                adj_df = pl.DataFrame(
+                    {
+                        f"{col}_mapped": current_marginals[f"{col}_mapped"],
+                        "weight": current_marginals["weight"],
+                        "target": target_marginals[col]["population"],
+                    }
+                ).with_columns(
+                    (pl.col("target") / pl.col("weight"))
+                    .fill_nan(1.0)
+                    .fill_null(1.0)
+                    .alias("factor")
                 )
 
-            # Check convergence
+                weight_df = (
+                    weight_df.lazy()
+                    .join(
+                        adj_df.lazy().select([f"{col}_mapped", "factor"]),
+                        on=f"{col}_mapped",
+                        how="left",
+                    )
+                    .with_columns(
+                        (pl.col("weight") * pl.col("factor").fill_null(1.0)).alias(
+                            "weight"
+                        )
+                    )
+                    .drop("factor")
+                    .collect()
+                )
+
             weight_diff = (weight_df["weight"] - prev_weights).abs().max()
             if weight_diff < tolerance:
                 converged = True
@@ -101,22 +100,16 @@ class Calculations:
         print(
             f"\nConverged after {iteration + 1} iterations"
             if converged
-            else f"Stopped after {max_iterations} iterations (diff: {weight_diff})"
+            else f"Max iterations reached (diff: {weight_diff})"
+        )
+        self.database.df = self.database.df.with_columns(
+            weight_df["weight"].alias("weight")
         )
 
-        # 7. Merge weights back to original data
-        result_df = (
-            self.database.df.with_columns(
-                weight_df["weight"].alias("weight")
-            ).with_columns(pl.col("weight").fill_null(1.0))  # Fill any NAs with 1.0
-        )
-
-        print("\n--- Weight calculation complete ---")
-        return result_df
+        return self.database.df
 
     def weights(self, file_name, target_columns: list, df_columns: list):
         """
-
         Dynamically calculates weights for a survey dataset using Iterative Proportional Fitting (IPF).
 
 
