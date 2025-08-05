@@ -13,6 +13,131 @@ class Calculations:
 
         print("Initialization of Calculations object complete.")
 
+    def weights_test(
+        self, file_name: str, target_columns: List[str], df_columns: List[str]
+    ) -> pl.DataFrame:
+        """
+        Vectorized IPF weight calculation using Polars, adding a 'weight' column to the survey DataFrame
+        without multiplying rows.
+
+        Args:
+            file_name (str): Path to the Excel file containing population targets.
+            target_columns (List[str]): Column names in the target data (Excel).
+            df_columns (List[str]): Corresponding column names in the survey data (`self.database.df`).
+
+        Returns:
+            pl.DataFrame: Survey DataFrame with a new 'weight' column, preserving original row count.
+        """
+
+        # 1. Load and prepare target data
+        target_df = (
+            pl.read_excel(file_name)
+            .melt(id_vars=["Område", "Ålder"], value_vars=["Kvinna", "Man"])
+            .rename({"variable": "Kön", "value": "population"})
+        )
+
+        # 2. Prepare survey data with mapped columns and unique row ID
+        survey_df = self.database.df.clone().with_row_index("_row_id")
+        mapped_cols = []
+        for col, target_col in zip(df_columns, target_columns):
+            if col in self.database.meta.variable_value_labels:
+                mapped_col_name = f"{col}_mapped"
+                value_labels = self.database.metadata.get_value_labels(column=col)
+                # Convert keys to strings to handle float/int keys
+                value_labels_str = {str(k): v for k, v in value_labels.items()}
+                survey_df = survey_df.with_columns(
+                    pl.col(col)
+                    .cast(pl.Utf8)
+                    .replace(value_labels_str)
+                    .alias(mapped_col_name)
+                )
+                mapped_cols.append(mapped_col_name)
+            else:
+                mapped_cols.append(col)
+                print(
+                    f"Warning: No value labels found for column '{col}'. Using raw values."
+                )
+
+        # 3. Initialize weights with unique row ID
+        weight_df = survey_df.select(["_row_id"] + mapped_cols).with_columns(
+            pl.lit(1.0).alias("weight")
+        )
+
+        # 4. Pre-compute target marginals
+        target_marginals = {
+            target_col: target_df.group_by(target_col).agg(pl.col("population").sum())
+            for target_col in target_columns
+        }
+
+        # 5. IPF Iteration
+        max_iterations = 1000
+        tolerance = 1e-6
+        converged = False
+
+        for iteration in range(max_iterations):
+            prev_weights = weight_df["weight"].clone()
+
+            for col, target_col in zip(mapped_cols, target_columns):
+                # Compute current marginals
+                current_marginals = (
+                    weight_df.group_by(col)
+                    .agg(pl.col("weight").sum())
+                    .filter(pl.col(col).is_not_null())
+                )
+                # Join with target marginals to calculate adjustment factors
+                adj_df = current_marginals.join(
+                    target_marginals[target_col],
+                    left_on=col,
+                    right_on=target_col,
+                    how="left",
+                ).with_columns(
+                    (pl.col("population") / pl.col("weight"))
+                    .fill_nan(1.0)
+                    .fill_null(1.0)
+                    .alias("factor")
+                )
+
+                # Apply adjustment factors
+                weight_df = (
+                    weight_df.join(adj_df.select([col, "factor"]), on=col, how="left")
+                    .with_columns(
+                        (pl.col("weight") * pl.col("factor").fill_null(1.0)).alias(
+                            "weight"
+                        )
+                    )
+                    .drop("factor")
+                )
+
+            # Check convergence
+            weight_diff = (weight_df["weight"] - prev_weights).abs().max()
+            if weight_diff < tolerance:
+                converged = True
+                break
+
+        print(
+            f"\nConverged after {iteration + 1} iterations"
+            if converged
+            else f"Max iterations reached (diff: {weight_diff})"
+        )
+        print(f"weight_df final row count: {weight_df.height}")
+
+        # 6. Aggregate weights to ensure unique rows per _row_id
+        weight_df = weight_df.group_by("_row_id").agg(pl.col("weight").mean())
+        print(f"weight_df row count after aggregation: {weight_df.height}")
+
+        # 7. Merge weights back to original DataFrame using _row_id
+        self.database.df = (
+            self.database.df.with_row_index("_row_id")
+            .join(weight_df.select(["_row_id", "weight"]), on="_row_id", how="left")
+            .with_columns(pl.col("weight").fill_null(1.0))
+            .drop("_row_id")
+        )
+
+        print(
+            f"\n--- Weight calculations complete. Output row count: {self.database.df.height} ---"
+        )
+        return self.database.df
+
     def weights(self, file_name, target_columns: list, df_columns: list):
         """
         Dynamically calculates weights for a survey dataset using Iterative Proportional Fitting (IPF).
