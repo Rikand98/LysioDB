@@ -44,7 +44,7 @@ class Category:
                     value_labels = self.database.metadata.get_value_labels(src_col)
                     for val in unique_values:
                         val_label = value_labels.get(val, str(val))
-                        name = f"{col}_{val_label}"
+                        name = f"{val_label}"
                         exprs.append(
                             pl.when(pl.col(src_col) == val)
                             .then(1)

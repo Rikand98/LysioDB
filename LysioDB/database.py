@@ -20,7 +20,7 @@ class Database:
         self.config = config or Config()
 
         self.question_df = pl.DataFrame()
-        self.categories = pl.Series()
+        self.categories = pl.DataFrame()
         self.percentage_df = pl.DataFrame()
         self.ranked_df = pl.DataFrame()
         self.index_df = pl.DataFrame()
