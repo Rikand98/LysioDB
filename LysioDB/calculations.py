@@ -1,4 +1,3 @@
-from LysioDB import config, database
 import pandas as pd
 import polars as pl
 from ipfn import ipfn
@@ -1168,7 +1167,6 @@ class Calculations:
         all_questions = [
             q for qlist in self.database.config.area_map.values() for q in qlist
         ]
-        print(self.database.question_df["question"].to_list())
         if not all_questions:
             all_questions = self.database.question_df["question"].to_list()
         questions_present = [q for q in all_questions if q in df_clean.columns]
