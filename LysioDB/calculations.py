@@ -1,3 +1,4 @@
+from LysioDB import config, database
 import pandas as pd
 import polars as pl
 from ipfn import ipfn
@@ -1167,6 +1168,9 @@ class Calculations:
         all_questions = [
             q for qlist in self.database.config.area_map.values() for q in qlist
         ]
+        print(self.database.question_df["question"].to_list())
+        if not all_questions:
+            all_questions = self.database.question_df["question"].to_list()
         questions_present = [q for q in all_questions if q in df_clean.columns]
 
         if correlate:
@@ -1228,9 +1232,15 @@ class Calculations:
         results_list = []
 
         area_map_list = []
-        for area_name, questions in self.database.config.area_map.items():
-            for question in questions:
-                area_map_list.append({"Question": question, "Frågeområde": area_name})
+        if self.database.config.area_map.items():
+            for area_name, questions in self.database.config.area_map.items():
+                for question in questions:
+                    area_map_list.append(
+                        {"Question": question, "Frågeområde": area_name}
+                    )
+        if not self.database.config.area_map.items():
+            for question in all_questions:
+                area_map_list.append({"Question": question, "Frågeområde": "Totalt"})
 
         area_map_df = pl.DataFrame(area_map_list)
 
@@ -1281,11 +1291,16 @@ class Calculations:
                 select_columns = ["Category", weight_column] + questions_present
             else:
                 select_columns = ["Category"] + questions_present
-            melted_df = df_category_filtered.select(select_columns).melt(
-                id_vars=["Category", weight_column] if weights else ["Category"],
-                value_vars=questions_present,
-                variable_name="Question",
-                value_name="Value",
+
+            melted_df = (
+                df_category_filtered.select(select_columns)
+                .melt(
+                    id_vars=["Category", weight_column] if weights else ["Category"],
+                    value_vars=questions_present,
+                    variable_name="Question",
+                    value_name="Value",
+                )
+                .with_columns(pl.col("Value").cast(pl.Float64, strict=False))
             )
             melted_df = melted_df.join(nan_counts, on="Question", how="left")
 
@@ -1485,9 +1500,27 @@ class Calculations:
             ordered_columns = ["Category"]
             existing_columns = final_result_wide.columns
 
-            for area_name, questions in self.database.config.area_map.items():
-                for q in questions:
-                    col_string_representation = f'{{"{area_name}","{q}"}}'
+            if self.database.config.area_map.items():
+                for area_name, questions in self.database.config.area_map.items():
+                    for q in questions:
+                        col_string_representation = f'{{"{area_name}","{q}"}}'
+                        if col_string_representation in existing_columns:
+                            ordered_columns.append(col_string_representation)
+                        else:
+                            print(
+                                f"Warning: Individual question column '{col_string_representation}' not found in final wide result. Skipping column ordering."
+                            )
+
+                    area_index_col_name = area_name
+                    if area_index_col_name in existing_columns:
+                        ordered_columns.append(area_index_col_name)
+                    else:
+                        print(
+                            f"Warning: Area index column '{area_index_col_name}' not found in final wide result. Skipping column ordering for this area index."
+                        )
+            if not self.database.config.area_map.items():
+                for question in all_questions:
+                    col_string_representation = f'{{"Totalt","{question}"}}'
                     if col_string_representation in existing_columns:
                         ordered_columns.append(col_string_representation)
                     else:
@@ -1495,7 +1528,7 @@ class Calculations:
                             f"Warning: Individual question column '{col_string_representation}' not found in final wide result. Skipping column ordering."
                         )
 
-                area_index_col_name = area_name
+                area_index_col_name = "Totalt"
                 if area_index_col_name in existing_columns:
                     ordered_columns.append(area_index_col_name)
                 else:
@@ -1508,11 +1541,17 @@ class Calculations:
             ]
             final_result_ordered = final_result_wide.select(final_ordered_cols_present)
             rename_mapping = {}
-            for area_name, questions in self.database.config.area_map.items():
-                for q in questions:
-                    old_col_name = f'{{"{area_name}","{q}"}}'
+            if self.database.config.area_map.items():
+                for area_name, questions in self.database.config.area_map.items():
+                    for q in questions:
+                        old_col_name = f'{{"{area_name}","{q}"}}'
+                        if old_col_name in final_result_ordered.columns:
+                            rename_mapping[old_col_name] = q
+            if not self.database.config.area_map.items():
+                for question in all_questions:
+                    old_col_name = f'{{"Totalt","{question}"}}'
                     if old_col_name in final_result_ordered.columns:
-                        rename_mapping[old_col_name] = q
+                        rename_mapping[old_col_name] = question
 
             if rename_mapping:
                 final_result_ordered = final_result_ordered.rename(rename_mapping)
