@@ -36,7 +36,7 @@ class Config:
                 question_prefix_base + f"{single_choice_pattern}$"
             )
 
-        self.NAN_VALUES = nan_values or {999: None}
+        self.NAN_VALUES = nan_values
 
         self.category_data = category_data or {}
         self.question_map = question_map or {}
