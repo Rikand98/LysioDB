@@ -3,6 +3,7 @@ import plotly.graph_objects as go
 import plotly.io as pio
 import plotly.subplots as sp
 import os
+import copy
 from typing import List, Dict, Optional, Tuple, Union
 
 
@@ -33,6 +34,7 @@ class Dashboard:
         node_colors: Optional[Dict[str, str]] = None,
         width: int = 3840,
         height: int = 2160,
+        font: int = 8,
     ) -> go.Figure:
         """
         Generate a Sankey diagram from percentage_df with customizable filters.
@@ -203,7 +205,7 @@ class Dashboard:
         # Update layout
         fig.update_layout(
             title_text=title,
-            font_size=8,
+            font_size=font,
             height=height,
             width=width,
         )
@@ -220,6 +222,7 @@ class Dashboard:
         title: str = "Bar Chart",
         width: int = 3840,
         height: int = 2160,
+        font: int = 8,
     ) -> go.Figure:
         """
         Generate a bar chart from percentage_df for a specific question and metric type.
@@ -293,7 +296,7 @@ class Dashboard:
             xaxis_title="Answer Options",
             yaxis_title=metric_type.capitalize(),
             barmode="group",
-            font_size=8,
+            font_size=font,
             width=width,
             height=height,
         )
@@ -306,6 +309,7 @@ class Dashboard:
         figures: List[go.Figure],
         output_file: str = "dashboard",
         output_format: Union[str, List[str]] = "html",
+        font: str = 8,
     ):
         """
         Save multiple Plotly figures as separate files (HTML and/or PDF).
@@ -342,14 +346,16 @@ class Dashboard:
                         print(f"Figure '{title}' saved to: {file_name}.html")
                     elif fmt == "pdf":
                         os.makedirs("pdf", exist_ok=True)
-                        fig.write_image(f"pdf/{file_name}.pdf", engine="kaleido")
+                        fig_static = copy.deepcopy(fig)
+                        fig_static.update_layout(font_size=font)
+                        fig_static.write_image(f"pdf/{file_name}.pdf", engine="kaleido")
                         print(f"Figure '{title}' saved to: {file_name}.pdf")
                     elif fmt == "png":
                         os.makedirs("png", exist_ok=True)
-                        fig.write_image(
-                            f"png/{file_name}.png",
-                            engine="kaleido",
-                            scale=5,
+                        fig_static = copy.deepcopy(fig)
+                        fig_static.update_layout(font_size=font)
+                        fig_static.write_image(
+                            f"png/{file_name}.png", engine="kaleido", scale=5
                         )
                         print(f"Figure '{title}' saved to: {file_name}.png")
                     else:
