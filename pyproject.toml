@@ -8,6 +8,8 @@ version = "0.1"
 dependencies = [
   "numpy",
   "polars",
+  "plotly",
+  "kaleido",
   "pyreadstat",
   "wordcloud",
   "spacy",

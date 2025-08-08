@@ -1,11 +1,12 @@
-from LysioDB.identify import Identify
-from LysioDB.transform import Transform
-from LysioDB.category import Category
 from LysioDB.calculations import Calculations
-from LysioDB.export import Export
+from LysioDB.category import Category
 from LysioDB.config import Config
+from LysioDB.dashboard import Dashboard
+from LysioDB.export import Export
+from LysioDB.identify import Identify
 from LysioDB.metadata import Metadata
 from LysioDB.power import Power
+from LysioDB.transform import Transform
 import polars as pl
 import pyreadstat as pystat
 
@@ -31,10 +32,11 @@ class Database:
 
         self.matrix = []
 
-        self.metadata = Metadata(self)
-        self.identify = Identify(self)
-        self.category = Category(self)
         self.calculations = Calculations(self)
-        self.transform = Transform(self)
+        self.category = Category(self)
+        self.dashboard = Dashboard(self)
         self.export = Export(self)
+        self.identify = Identify(self)
+        self.metadata = Metadata(self)
         self.power = Power(self)
+        self.transform = Transform(self)

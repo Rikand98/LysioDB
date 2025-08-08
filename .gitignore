@@ -56,3 +56,4 @@ htmlcov/
 .ruff_cache/
 .ruff_cache
 .blackd/
+.opencode/
