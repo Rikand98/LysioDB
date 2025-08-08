@@ -31,8 +31,8 @@ class Dashboard:
         output_file: str = "sankey_dashboard.html",
         title: str = "Sankey Diagram",
         node_colors: Optional[Dict[str, str]] = None,
-        width: int = 2000,
-        height: int = 1920,
+        width: int = 3840,
+        height: int = 2160,
     ) -> go.Figure:
         """
         Generate a Sankey diagram from percentage_df with customizable filters.
@@ -130,8 +130,6 @@ class Dashboard:
             fig = go.Figure()
             fig.update_layout(
                 title_text="No data available for the selected filters.",
-                height=300,
-                width=500,
             )
             return fig
 
@@ -220,8 +218,8 @@ class Dashboard:
         categories: Optional[List[str]] = None,
         output_file: str = "bar_chart_dashboard.html",
         title: str = "Bar Chart",
-        width: int = 1600,
-        height: int = 1200,
+        width: int = 3840,
+        height: int = 2160,
     ) -> go.Figure:
         """
         Generate a bar chart from percentage_df for a specific question and metric type.
@@ -263,8 +261,6 @@ class Dashboard:
             fig = go.Figure()
             fig.update_layout(
                 title_text="No data available for the selected filters.",
-                height=300,
-                width=500,
             )
             return fig
 
@@ -297,7 +293,7 @@ class Dashboard:
             xaxis_title="Answer Options",
             yaxis_title=metric_type.capitalize(),
             barmode="group",
-            font_size=16,
+            font_size=8,
             width=width,
             height=height,
         )
@@ -320,8 +316,6 @@ class Dashboard:
             output_format (Union[str, List[str]]): Format(s) to save the figures ('html', 'pdf', or list of both). Default is 'html'.
         """
         print(f"\n--- Saving dashboard figures to '{output_file}' ---")
-        os.makedirs("html", exist_ok=True)
-        os.makedirs("pdf", exist_ok=True)
         if not figures:
             print("No figures provided to save.")
             return
@@ -343,14 +337,24 @@ class Dashboard:
             for fmt in output_format:
                 try:
                     if fmt == "html":
+                        os.makedirs("html", exist_ok=True)
                         fig.write_html(f"html/{file_name}.html")
                         print(f"Figure '{title}' saved to: {file_name}.html")
                     elif fmt == "pdf":
+                        os.makedirs("pdf", exist_ok=True)
                         fig.write_image(f"pdf/{file_name}.pdf", engine="kaleido")
                         print(f"Figure '{title}' saved to: {file_name}.pdf")
+                    elif fmt == "png":
+                        os.makedirs("png", exist_ok=True)
+                        fig.write_image(
+                            f"png/{file_name}.png",
+                            engine="kaleido",
+                            scale=5,
+                        )
+                        print(f"Figure '{title}' saved to: {file_name}.png")
                     else:
                         print(
-                            f"Unsupported format '{fmt}'. Supported formats: 'html', 'pdf'."
+                            f"Unsupported format '{fmt}'. Supported formats: 'html', 'pdf', 'png'."
                         )
                 except Exception as e:
                     print(f"Error saving figure '{title}' to '{file_name}.{fmt}': {e}")
