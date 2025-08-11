@@ -306,7 +306,7 @@ class Dashboard:
         self,
         figures: List[go.Figure],
         output_file: str = "dashboard",
-        output_format: Union[str, List[str]] = "html",
+        format: Union[str, List[str]] = "html",
         font: str = 8,
     ):
         """
@@ -322,8 +322,8 @@ class Dashboard:
             print("No figures provided to save.")
             return
 
-        if isinstance(output_format, str):
-            output_format = [output_format]
+        if isinstance(format, str):
+            format = [format]
 
         for idx, fig in enumerate(figures):
             # Use figure title for file name, or fall back to index
@@ -336,7 +336,7 @@ class Dashboard:
             ).strip("_")
             file_name = f"{output_file}_{title}"
 
-            for fmt in output_format:
+            for fmt in format:
                 try:
                     if fmt == "html":
                         os.makedirs("html", exist_ok=True)
