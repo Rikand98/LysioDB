@@ -1,3 +1,4 @@
+from LysioDB import database
 import polars as pl
 import plotly.graph_objects as go
 import plotly.io as pio
@@ -20,7 +21,344 @@ class Dashboard:
         self.default_link_color = "rgba(128, 128, 128, 0.3)"
         print("Initialization of Dashboard object complete.")
 
-    def create_sankey(
+    def pie_chart(
+        self,
+        question: str,
+        metric_type: str = "percentage",
+        categories: Optional[List[str]] = None,
+        exclude_answers: Optional[List[str]] = None,
+        title: str = "Pie Chart",
+        width: int = 3840,
+        height: int = 2160,
+        font_family: str = "Aptos",
+        font_size: int = 8,
+    ) -> go.Figure:
+        """
+        Generate a pie chart from percentage_df for a specific question and metric type.
+
+        Args:
+            question (str): The question identifier (e.g., 'Q2') to filter percentage_df.
+            metric_type (str): The metric type to filter (e.g., 'percentage', 'count'). Default is 'percentage'.
+            categories (Optional[List[str]]): List of categories to include. Default is None (all categories).
+            exclude_answers (Optional[List[str]]): List of answer labels to exclude. Default is None.
+            title (str): Title of the pie chart. Default is 'Pie Chart'.
+            width (int): Width of the plot in pixels. Default is 1200.
+            height (int): Height of the plot in pixels. Default is 800.
+            font_family (str): Font family for the figure (e.g., 'Arial', 'Helvetica'). Default is 'Arial'.
+            font_size (int): Font size for the figure. Default is 16.
+
+        Returns:
+            go.Figure: Plotly figure object for the pie chart.
+        """
+        print(f"\n--- Generating pie chart for question '{question}' ---")
+
+        if (
+            self.database.percentage_df is None
+            or self.database.percentage_df.is_empty()
+        ):
+            print("Percentage DataFrame is empty or None. Cannot generate pie chart.")
+            return go.Figure()
+
+        # Filter data
+        df_filtered = self.database.percentage_df.filter(
+            (pl.col("question") == question) & (pl.col("metric_type") == metric_type)
+        )
+
+        if categories:
+            df_filtered = df_filtered.select(
+                ["question", "display_question_label", "answer_label", "metric_type"]
+                + categories
+            )
+
+        if exclude_answers:
+            df_filtered = df_filtered.filter(
+                ~pl.col("answer_label").is_in(exclude_answers)
+            )
+
+        if df_filtered.is_empty():
+            print("Filtered DataFrame is empty. Returning empty figure.")
+            fig = go.Figure()
+            fig.update_layout(
+                title_text="No data available for the selected filters.",
+                height=300,
+                width=500,
+                font=dict(family=font_family, size=font_size),
+            )
+            return fig
+
+        # Aggregate data by answer_label for pie chart
+        category_columns = [
+            col
+            for col in df_filtered.columns
+            if col
+            not in ["question", "display_question_label", "answer_label", "metric_type"]
+        ]
+        if not category_columns:
+            print("No categories available for pie chart. Returning empty figure.")
+            return go.Figure()
+
+        # Sum across categories for each answer_label
+        df_aggregated = df_filtered.group_by("answer_label").agg(
+            pl.sum_horizontal(category_columns).alias("value")
+        )
+
+        # Format text as percentage
+        df_aggregated = df_aggregated.with_columns(
+            (pl.col("value").mul(100).round(2).cast(pl.String) + "%")
+            .fill_null("")
+            .alias("text")
+        )
+
+        # Create pie chart
+        fig = go.Figure(
+            data=[
+                go.Pie(
+                    labels=df_aggregated["answer_label"],
+                    values=df_aggregated["value"],
+                    text=df_aggregated["text"],
+                    textinfo="label+percent",
+                    textposition="auto",
+                )
+            ]
+        )
+        fig.update_layout(
+            title_text=title,
+            font=dict(family=font_family, size=font_size),
+            width=width,
+            height=height,
+            showlegend=True,
+        )
+
+        print("\n--- Pie chart generation complete ---")
+        return fig
+
+    def likert(
+        self,
+        question: str,
+        metric_type: str = "percentage",
+        categories: Optional[List[str]] = None,
+        exclude_answers: Optional[List[str]] = None,
+        title: str = "Horizontal Stacked Bar Chart",
+        width: int = 3840,
+        height: int = 2160,
+        font_family: str = "Aptos",
+        font_size: int = 8,
+        colors: Optional[List[str]] = None,
+    ) -> go.Figure:
+        """
+        Generate a horizontal stacked bar chart from percentage_df, with categories on y-axis and answer labels on x-axis, using pre-normalized percentages summing to 100% per category.
+
+        Args:
+            question (str): The question identifier (e.g., 'Q2') to filter percentage_df.
+            metric_type (str): The metric type to filter (e.g., 'percentage', 'count'). Default is 'percentage'.
+            categories (Optional[List[str]]): List of categories to include. Default is None (all categories).
+            exclude_answers (Optional[List[str]]): List of answer labels to exclude. Default is None.
+            title (str): Title of the bar chart. Default is 'Horizontal Stacked Bar Chart'.
+            width (int): Width of the plot in pixels. Default is 1200.
+            height (int): Height of the plot in pixels. Default is 800.
+            font_family (str): Font family for the figure (e.g., 'Arial', 'Helvetica'). Default is 'Arial'.
+            font_size (int): Font size for annotations. Default is 14.
+            colors (Optional[List[str]]): List of colors for answer labels. Default is None (uses ['DarkBlue', 'MediumBlue', 'DarkSlateBlue', 'mediumpurple', 'thistle']).
+
+        Returns:
+            go.Figure: Plotly figure object for the horizontal stacked bar chart.
+        """
+        print(
+            f"\n--- Generating horizontal stacked bar chart for question '{question}' ---"
+        )
+
+        if (
+            self.database.percentage_df is None
+            or self.database.percentage_df.is_empty()
+        ):
+            print(
+                "Percentage DataFrame is empty or None. Cannot generate horizontal stacked bar chart."
+            )
+            return go.Figure()
+
+        # Filter data
+        df_filtered = self.database.percentage_df.filter(
+            (pl.col("question") == question) & (pl.col("metric_type") == metric_type)
+        )
+
+        if categories:
+            df_filtered = df_filtered.select(
+                ["question", "display_question_label", "answer_label", "metric_type"]
+                + categories
+            )
+
+        if exclude_answers:
+            df_filtered = df_filtered.filter(
+                ~pl.col("answer_label").is_in(exclude_answers)
+            )
+
+        if df_filtered.is_empty():
+            print("Filtered DataFrame is empty. Returning empty figure.")
+            fig = go.Figure()
+            fig.update_layout(
+                title_text="No data available for the selected filters.",
+                height=300,
+                width=500,
+                font=dict(family=font_family, size=font_size),
+            )
+            return fig
+
+        # Get category columns
+        category_columns = [
+            col
+            for col in df_filtered.columns
+            if col
+            not in ["question", "display_question_label", "answer_label", "metric_type"]
+        ]
+        if not category_columns:
+            print(
+                "No categories available for horizontal stacked bar chart. Returning empty figure."
+            )
+            return go.Figure()
+
+        answer_labels = self.database.question_df.filter(
+            pl.col("question") == question
+        )["value_labels_info"][0]
+
+        # Default colors if none provided
+        default_colors = [
+            "DarkBlue",
+            "MediumBlue",
+            "DarkSlateBlue",
+            "mediumpurple",
+            "thistle",
+        ]
+        colors = colors if colors else default_colors
+
+        # Handle colors as list or dictionary
+        if isinstance(colors, list):
+            # Ensure colors list is long enough for answer labels
+            if len(colors) < len(answer_labels):
+                colors = colors * (
+                    len(answer_labels) // len(colors) + 1
+                )  # Repeat colors if needed
+            colors_list = colors[
+                : len(answer_labels)
+            ]  # Truncate to match number of answers
+            color_map = {
+                key: colors_list[i] for i, (key, _) in enumerate(answer_labels.items())
+            }
+        else:  # Assume colors is a dictionary
+            color_map = {
+                key: colors.get(key, default_colors[i % len(default_colors)])
+                for i, (key, _) in enumerate(answer_labels.items())
+            }
+
+        # Create figure and traces
+        fig = go.Figure()
+        annotations = []
+
+        for i, (key, answer) in enumerate(answer_labels.items()):
+            # Get percentages for this answer across categories
+            percentages = (
+                df_filtered.filter(pl.col("answer_label") == answer)
+                .select(category_columns)
+                .to_dicts()
+            )
+            if not percentages:  # Skip if no data for this answer
+                continue
+            percentages = percentages[0]
+            values = [percentages.get(cat, 0) for cat in category_columns]
+
+            trace = go.Bar(
+                x=values,
+                y=category_columns,
+                orientation="h",
+                name=answer,
+                marker=dict(
+                    color=color_map[key], line=dict(color="ghostwhite", width=1)
+                ),
+            )
+            fig.add_trace(trace)
+
+        # Add annotations
+        for yd in category_columns:
+            # Category labels on y-axis (left side)
+            annotations.append(
+                dict(
+                    xref="paper",
+                    yref="y",
+                    x=0.14,
+                    y=yd,
+                    xanchor="right",
+                    text=str(yd),
+                    font=dict(family=font_family, size=font_size, color="dimgray"),
+                    showarrow=False,
+                    align="right",
+                )
+            )
+            # Percentage labels on bars
+            space = 0
+            for i, (key, answer) in enumerate(answer_labels.items()):
+                percentages = (
+                    df_filtered.filter(pl.col("answer_label") == answer)
+                    .select(yd)
+                    .to_dicts()
+                )
+                if not percentages:  # Skip if no data for this answer
+                    continue
+                value = percentages[0][yd]
+                if value is not None and value >= 0.03:  # Only annotate non-zero values
+                    annotations.append(
+                        dict(
+                            xref="x",
+                            yref="y",
+                            x=space + (value / 2),
+                            y=yd,
+                            text=f"{value * 100:.2f}%",
+                            font=dict(
+                                family=font_family, size=font_size, color="ghostwhite"
+                            ),
+                            showarrow=False,
+                        )
+                    )
+                # Answer labels above top bar
+                annotations.append(
+                    dict(
+                        xref="x",
+                        yref="paper",
+                        x=space + (value / 2) if value is not None else space,
+                        y=1.1,
+                        text=answer,
+                        font=dict(family=font_family, size=font_size, color="dimgray"),
+                        showarrow=False,
+                    )
+                )
+                space += value if value is not None else 0
+
+        # Update layout
+        fig.update_layout(
+            title_text=title,
+            xaxis=dict(
+                showgrid=False,
+                showline=False,
+                showticklabels=False,
+                zeroline=False,
+                domain=[0, 1],
+            ),
+            yaxis=dict(
+                showgrid=False, showline=False, showticklabels=False, zeroline=False
+            ),
+            barmode="stack",
+            paper_bgcolor="lavenderblush",
+            plot_bgcolor="lavenderblush",
+            margin=dict(l=120, r=10, t=140, b=80),
+            showlegend=False,
+            font=dict(family=font_family, size=font_size),
+            width=width,
+            height=height,
+            annotations=annotations,
+        )
+
+        print("\n--- Horizontal stacked bar chart generation complete ---")
+        return fig
+
+    def sankey(
         self,
         question: str,
         metric_type: str = "count",
@@ -33,7 +371,8 @@ class Dashboard:
         node_colors: Optional[Dict[str, str]] = None,
         width: int = 3840,
         height: int = 2160,
-        font: int = 8,
+        font_family: str = "Aptos",
+        font_size: int = 8,
     ) -> go.Figure:
         """
         Generate a Sankey diagram from percentage_df with customizable filters.
@@ -204,7 +543,8 @@ class Dashboard:
         # Update layout
         fig.update_layout(
             title_text=title,
-            font_size=font,
+            font_family=font_family,
+            font_size=font_size,
             height=height,
             width=width,
         )
@@ -212,7 +552,7 @@ class Dashboard:
         print("\n--- Sankey diagram generation complete ---")
         return fig
 
-    def create_bar_chart(
+    def bar_chart(
         self,
         question: str,
         metric_type: str = "percentage",
@@ -220,7 +560,8 @@ class Dashboard:
         title: str = "Bar Chart",
         width: int = 3840,
         height: int = 2160,
-        font: int = 8,
+        font_family: str = "Aptos",
+        font_size: int = 8,
     ) -> go.Figure:
         """
         Generate a bar chart from percentage_df for a specific question and metric type.
@@ -294,7 +635,8 @@ class Dashboard:
             xaxis_title="Answer Options",
             yaxis_title=metric_type.capitalize(),
             barmode="group",
-            font_size=font,
+            font_family=font_family,
+            font_size=font_size,
             width=width,
             height=height,
         )
@@ -307,7 +649,7 @@ class Dashboard:
         figures: List[go.Figure],
         output_file: str = "dashboard",
         format: Union[str, List[str]] = "html",
-        font: str = 8,
+        font_size: str = 8,
     ):
         """
         Save multiple Plotly figures as separate files (HTML and/or PDF).
@@ -345,13 +687,13 @@ class Dashboard:
                     elif fmt == "pdf":
                         os.makedirs("pdf", exist_ok=True)
                         fig_static = copy.deepcopy(fig)
-                        fig_static.update_layout(font_size=font)
+                        fig_static.update_layout(font_size=font_size)
                         fig_static.write_image(f"pdf/{file_name}.pdf", engine="kaleido")
                         print(f"Figure '{title}' saved to: {file_name}.pdf")
                     elif fmt == "png":
                         os.makedirs("png", exist_ok=True)
                         fig_static = copy.deepcopy(fig)
-                        fig_static.update_layout(font_size=font)
+                        fig_static.update_layout(font_size=font_size)
                         fig_static.write_image(
                             f"png/{file_name}.png", engine="kaleido", scale=5
                         )
