@@ -139,14 +139,14 @@ class Dashboard:
         categories: Optional[List[str]] = None,
         exclude_answers: Optional[List[str]] = None,
         title: str = "Horizontal Stacked Bar Chart",
-        width: int = 3840,
-        height: int = 2160,
+        width: int = 1400,
+        height: int = 1000,
         font_family: str = "Aptos",
-        font_size: int = 8,
+        font_size: int = 14,
         colors: Optional[List[str]] = None,
     ) -> go.Figure:
         """
-        Generate a horizontal stacked bar chart from percentage_df, with categories on y-axis and answer labels on x-axis, using pre-normalized percentages summing to 100% per category.
+        Generate a horizontal stacked bar chart from percentage_df, with categories on y-axis and answer labels on x-axis, using pre-normalized percentages summing to 100% per category. Adds a table to the right with columns 'Index', 'Answers', and optionally 'Nans' (if NaN data exists). Includes annotations for category labels, percentages, answer labels, and NaN percentages.
 
         Args:
             question (str): The question identifier (e.g., 'Q2') to filter percentage_df.
@@ -154,14 +154,14 @@ class Dashboard:
             categories (Optional[List[str]]): List of categories to include. Default is None (all categories).
             exclude_answers (Optional[List[str]]): List of answer labels to exclude. Default is None.
             title (str): Title of the bar chart. Default is 'Horizontal Stacked Bar Chart'.
-            width (int): Width of the plot in pixels. Default is 1200.
-            height (int): Height of the plot in pixels. Default is 800.
-            font_family (str): Font family for the figure (e.g., 'Arial', 'Helvetica'). Default is 'Arial'.
-            font_size (int): Font size for annotations. Default is 14.
+            width (int): Width of the plot in pixels. Default is 1400 to accommodate table on the right.
+            height (int): Height of the plot in pixels. Default is 1000.
+            font_family (str): Font family for annotations and table (e.g., 'Aptos', 'Arial'). Default is 'Aptos'.
+            font_size (int): Font size for annotations and table. Default is 14.
             colors (Optional[List[str]]): List of colors for answer labels. Default is None (uses ['DarkBlue', 'MediumBlue', 'DarkSlateBlue', 'mediumpurple', 'thistle']).
 
         Returns:
-            go.Figure: Plotly figure object for the horizontal stacked bar chart.
+            go.Figure: Plotly figure object for the horizontal stacked bar chart with table.
         """
         print(
             f"\n--- Generating horizontal stacked bar chart for question '{question}' ---"
@@ -178,12 +178,18 @@ class Dashboard:
 
         # Filter data
         df_filtered = self.database.percentage_df.filter(
-            (pl.col("question") == question) & (pl.col("metric_type") == metric_type)
+            (pl.col("question") == question)
         )
 
         if categories:
             df_filtered = df_filtered.select(
-                ["question", "display_question_label", "answer_label", "metric_type"]
+                [
+                    "question",
+                    "display_question_label",
+                    "answer_label",
+                    "metric_type",
+                    "answer_value",
+                ]
                 + categories
             )
 
@@ -208,7 +214,13 @@ class Dashboard:
             col
             for col in df_filtered.columns
             if col
-            not in ["question", "display_question_label", "answer_label", "metric_type"]
+            not in [
+                "question",
+                "display_question_label",
+                "answer_label",
+                "metric_type",
+                "answer_value",
+            ]
         ]
         if not category_columns:
             print(
@@ -216,9 +228,13 @@ class Dashboard:
             )
             return go.Figure()
 
+        # Get answer labels
         answer_labels = self.database.question_df.filter(
             pl.col("question") == question
         )["value_labels_info"][0]
+        answer_labels = {
+            k: v for k, v in answer_labels.items() if k != "nan" and k != "Total"
+        }
 
         # Default colors if none provided
         default_colors = [
@@ -229,44 +245,57 @@ class Dashboard:
             "thistle",
         ]
         colors = colors if colors else default_colors
+        if len(colors) < len(answer_labels):
+            colors = colors * (len(answer_labels) // len(colors) + 1)
+        colors_list = colors[: len(answer_labels)]
+        color_map = {
+            key: colors_list[i] for i, (key, _) in enumerate(answer_labels.items())
+        }
 
-        # Handle colors as list or dictionary
-        if isinstance(colors, list):
-            # Ensure colors list is long enough for answer labels
-            if len(colors) < len(answer_labels):
-                colors = colors * (
-                    len(answer_labels) // len(colors) + 1
-                )  # Repeat colors if needed
-            colors_list = colors[
-                : len(answer_labels)
-            ]  # Truncate to match number of answers
-            color_map = {
-                key: colors_list[i] for i, (key, _) in enumerate(answer_labels.items())
-            }
-        else:  # Assume colors is a dictionary
-            color_map = {
-                key: colors.get(key, default_colors[i % len(default_colors)])
-                for i, (key, _) in enumerate(answer_labels.items())
-            }
+        # Create subplot figure
+        fig = sp.make_subplots(
+            rows=1,
+            cols=2,
+            column_widths=[0.8, 0.2],
+            specs=[[{"type": "bar"}, {"type": "table"}]],
+            horizontal_spacing=0.05,
+            shared_yaxes=True,  # Align table rows with chart categories
+        )
 
-        # Create figure and traces
-        fig = go.Figure()
+        # Compute NaN percentages for annotations
+        nan_percentages = {}
+        nans_data = (
+            df_filtered.filter(
+                (pl.col("metric_type") == "percentage")
+                & (pl.col("answer_label") == "nan")
+            )
+            .select(category_columns)
+            .to_dicts()
+        )
+        nans_available = bool(nans_data)
+        if nans_available:
+            nans_data = nans_data[0]
+            for cat in category_columns:
+                nan_percentages[cat] = round(nans_data.get(cat, 0) * 100, 2)
+
+        # Create bar traces
         annotations = []
-
         for i, (key, answer) in enumerate(answer_labels.items()):
-            # Get percentages for this answer across categories
             percentages = (
-                df_filtered.filter(pl.col("answer_label") == answer)
+                df_filtered.filter(
+                    (pl.col("answer_label") == answer)
+                    & (pl.col("metric_type") == "percentage")
+                )
                 .select(category_columns)
                 .to_dicts()
             )
-            if not percentages:  # Skip if no data for this answer
+            if not percentages:
                 continue
             percentages = percentages[0]
-            values = [percentages.get(cat, 0) for cat in category_columns]
+            values_percentage = [percentages.get(cat, 0) for cat in category_columns]
 
-            trace = go.Bar(
-                x=values,
+            bar_trace = go.Bar(
+                x=values_percentage,
                 y=category_columns,
                 orientation="h",
                 name=answer,
@@ -274,84 +303,135 @@ class Dashboard:
                     color=color_map[key], line=dict(color="ghostwhite", width=1)
                 ),
             )
-            fig.add_trace(trace)
+            fig.add_trace(bar_trace, row=1, col=1)
 
-        # Add annotations
-        for yd in category_columns:
-            # Category labels on y-axis (left side)
-            annotations.append(
-                dict(
-                    xref="paper",
-                    yref="y",
-                    x=0.14,
-                    y=yd,
-                    xanchor="right",
-                    text=str(yd),
-                    font=dict(family=font_family, size=font_size, color="dimgray"),
-                    showarrow=False,
-                    align="right",
+        # Add table trace
+        table_values = [
+            [
+                round(
+                    self.database.index_df.filter(pl.col("Category") == cat).item(
+                        0, question
+                    ),
+                    2,
                 )
+                if hasattr(self.database, "index_df")
+                and self.database.index_df is not None
+                else i + 1
+                for i, cat in enumerate(category_columns[::-1])
+            ],
+            [
+                df_filtered.filter(
+                    (pl.col("answer_label") == "Total")
+                    & (pl.col("metric_type") == "count")
+                    & (pl.col("answer_value") == "total")
+                )
+                .select(category_columns)
+                .item(0, cat)
+                or 0
+                for cat in category_columns[::-1]
+            ],
+        ]
+        if nans_available:
+            table_values.append(
+                [
+                    (
+                        df_filtered.filter(
+                            (pl.col("answer_label") == "nan")
+                            & (pl.col("metric_type") == "percentage")
+                        )
+                        .select(category_columns)
+                        .item(0, cat)
+                        or 0
+                    )
+                    * 100
+                    for cat in category_columns[::-1]
+                ]
             )
-            # Percentage labels on bars
+
+        cell_height = height // (len(category_columns) + 1)
+        fig.add_trace(
+            go.Table(
+                header=dict(
+                    values=["Index", "Answers", "Nans"]
+                    if nans_available
+                    else ["Index", "Answers"],
+                    font=dict(family=font_family, size=font_size, color="dimgray"),
+                    fill_color="ghostwhite",
+                    align="center",
+                    height=font_size * 2,
+                ),
+                cells=dict(
+                    values=table_values,
+                    font=dict(family=font_family, size=font_size, color="dimgray"),
+                    fill_color="ghostwhite",
+                    align="center",
+                    height=cell_height,
+                ),
+            ),
+            row=1,
+            col=2,
+        )
+
+        for yd in category_columns:
             space = 0
             for i, (key, answer) in enumerate(answer_labels.items()):
                 percentages = (
-                    df_filtered.filter(pl.col("answer_label") == answer)
+                    df_filtered.filter(
+                        (pl.col("answer_label") == answer)
+                        & (pl.col("metric_type") == "percentage")
+                    )
                     .select(yd)
                     .to_dicts()
                 )
-                if not percentages:  # Skip if no data for this answer
+                if not percentages:
                     continue
                 value = percentages[0][yd]
-                if value is not None and value >= 0.03:  # Only annotate non-zero values
+                if value is not None and value >= 0.03:
                     annotations.append(
                         dict(
                             xref="x",
                             yref="y",
                             x=space + (value / 2),
                             y=yd,
-                            text=f"{value * 100:.2f}%",
+                            text=f"{int(value * 100)}%",
                             font=dict(
                                 family=font_family, size=font_size, color="ghostwhite"
                             ),
                             showarrow=False,
                         )
                     )
-                # Answer labels above top bar
+                space += value if value is not None else 0
+            if nans_available:
                 annotations.append(
                     dict(
                         xref="x",
-                        yref="paper",
-                        x=space + (value / 2) if value is not None else space,
-                        y=1.1,
-                        text=answer,
+                        yref="y",
+                        x=100,
+                        y=yd,
+                        xanchor="left",
+                        text=f"NaN: {nan_percentages.get(yd, 0):.2f}%",
                         font=dict(family=font_family, size=font_size, color="dimgray"),
                         showarrow=False,
+                        align="left",
                     )
                 )
-                space += value if value is not None else 0
 
         # Update layout
         fig.update_layout(
             title_text=title,
             xaxis=dict(
-                showgrid=False,
-                showline=False,
-                showticklabels=False,
-                zeroline=False,
-                domain=[0, 1],
-            ),
-            yaxis=dict(
-                showgrid=False, showline=False, showticklabels=False, zeroline=False
+                range=[0, 1],  # Adjusted for scaled percentages
+                tickvals=[0, 0.2, 0.4, 0.6, 0.8, 1],
+                ticktext=["0%", "20%", "40%", "60%", "80%", "100%"],
+                domain=[0.15, 0.8],  # Adjusted to prevent squeezing
             ),
             barmode="stack",
-            paper_bgcolor="lavenderblush",
-            plot_bgcolor="lavenderblush",
-            margin=dict(l=120, r=10, t=140, b=80),
-            showlegend=False,
+            paper_bgcolor="ghostwhite",
+            plot_bgcolor="ghostwhite",
             font=dict(family=font_family, size=font_size),
             width=width,
             height=height,
+            margin=dict(l=150, r=50, t=100, b=100),  # Adjusted for better spacing
             annotations=annotations,
         )
 
