@@ -135,7 +135,6 @@ class Dashboard:
     def likert(
         self,
         question: str,
-        metric_type: str = "percentage",
         categories: Optional[List[str]] = None,
         exclude_answers: Optional[List[str]] = None,
         title: str = "Horizontal Stacked Bar Chart",
@@ -267,7 +266,7 @@ class Dashboard:
         nans_data = (
             df_filtered.filter(
                 (pl.col("metric_type") == "percentage")
-                & (pl.col("answer_label") == "nan")
+                & (pl.col("answer_value") == "nan")
             )
             .select(category_columns)
             .to_dicts()
@@ -333,19 +332,7 @@ class Dashboard:
         ]
         if nans_available:
             table_values.append(
-                [
-                    (
-                        df_filtered.filter(
-                            (pl.col("answer_label") == "nan")
-                            & (pl.col("metric_type") == "percentage")
-                        )
-                        .select(category_columns)
-                        .item(0, cat)
-                        or 0
-                    )
-                    * 100
-                    for cat in category_columns[::-1]
-                ]
+                [int(round(nan_percentages[cat], 0)) for cat in category_columns[::-1]]
             )
 
         cell_height = height // (len(category_columns) + 1)
@@ -393,7 +380,7 @@ class Dashboard:
                             yref="y",
                             x=space + (value / 2),
                             y=yd,
-                            text=f"{int(value * 100)}%",
+                            text=f"{int(round(value * 100, 0))}%",
                             font=dict(
                                 family=font_family, size=font_size, color="ghostwhite"
                             ),

@@ -55,6 +55,7 @@ class Category:
                         categories.append(name)
 
                 elif cat_type == "unique":
+                    unique_values = unique_values.sort()
                     for val in unique_values:
                         exprs.append(
                             pl.when(pl.col(src_col) == val)
