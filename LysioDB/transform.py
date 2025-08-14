@@ -114,7 +114,9 @@ class Transform:
         print("Background data and metadata added successfully.")
         return database_df
 
-    def map(database_path: str, old_database_paths: dict, new_path: str):
+    def map(
+        database_path: str, old_database_paths: dict, new_path: str = "mapped_db.sav"
+    ):
         """
         Standardizes old datasets to match the 2025 schema and merges them
         by matching question text (metadata labels) instead of column names.
