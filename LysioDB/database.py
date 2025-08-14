@@ -8,6 +8,7 @@ from LysioDB.metadata import Metadata
 from LysioDB.power import Power
 from LysioDB.transform import Transform
 import polars as pl
+import polars_readstat as pr
 import pyreadstat as pystat
 
 
@@ -15,9 +16,11 @@ class Database:
     def __init__(self, sav_file: str, config: Config = None):
         """Initialize the processor by loading data from a .sav file."""
         self.df: pl.DataFrame
+        self.lf: pl.LazyFrame
         self.meta: pystat.metadata_container
-        dataframe, self.meta = pystat.read_sav(sav_file)
-        self.df = pl.DataFrame(dataframe)
+        _, self.meta = pystat.read_sav(sav_file)
+        self.lf = pr.scan_readstat(sav_file)
+        self.df = self.lf.collect()
         self.config = config or Config()
 
         self.question_df = pl.DataFrame()
