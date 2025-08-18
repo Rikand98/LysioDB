@@ -30,6 +30,9 @@ class Transform:
             elif background_path.lower().endswith((".xls", ".xlsx")):
                 background_df = pl.read_excel(background_path)
                 background_meta = None
+            elif background_path.lower().endswith((".csv")):
+                background_df = pl.read_csv(background_path, separator=";")
+                background_meta = None
             else:
                 raise ValueError(
                     "Unsupported file format. Please provide a .sav, .zsav, .xls, or .xlsx file."
