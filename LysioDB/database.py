@@ -26,7 +26,7 @@ class Database:
         self.question_df = pl.DataFrame()
         self.categories = pl.DataFrame()
         self.percentage_df = pl.DataFrame()
-        self.ranked_df = pl.DataFrame()
+        self.ranked_dfs = dict(pl.DataFrame())
         self.index_df = pl.DataFrame()
         self.eni_df = pl.DataFrame()
         self.eni_percentage_df = pl.DataFrame()

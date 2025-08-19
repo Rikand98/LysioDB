@@ -159,9 +159,15 @@ class Identify:
                     pl.lit(None).alias("value_labels_info"),
                 ]
             )
+        ls_condition = pl.col("column_label").str.starts_with("[")
         apply_split_condition = pl.col("question_type").is_in(
             ["grid", "multi_response"]
         )
+        regex_pattern_ls = r"^(.*)(])(.*)$"
+        ls_extracted_parts = pl.col("column_label").str.extract_groups(
+            pattern=regex_pattern_ls
+        )
+        match_ls_successful_condition = ls_extracted_parts.struct[0].is_not_null()
         regex_pattern_multi = r"^(.*)( \d{1,2} = )(.*)$"
         multi_extracted_parts = pl.col("column_label").str.extract_groups(
             pattern=regex_pattern_multi
@@ -174,19 +180,27 @@ class Identify:
         match_grid_successful_condition = grid_extracted_parts.struct[1].is_not_null()
 
         base_question_label_expr = (
-            pl.when(apply_split_condition & match_multi_successful_condition)
-            .then(multi_extracted_parts.struct[0])
-            .when(apply_split_condition & match_grid_successful_condition)
-            .then(grid_extracted_parts.struct[0])
-            .otherwise(pl.col("column_label"))
+            pl.when(ls_condition & match_ls_successful_condition)
+            .then(ls_extracted_parts.struct[2])
+            .otherwise(
+                pl.when(apply_split_condition & match_multi_successful_condition)
+                .then(multi_extracted_parts.struct[0])
+                .when(apply_split_condition & match_grid_successful_condition)
+                .then(grid_extracted_parts.struct[0])
+                .otherwise(pl.col("column_label"))
+            )
         )
 
         question_label_expr = (
-            pl.when(apply_split_condition & match_multi_successful_condition)
-            .then(multi_extracted_parts.struct[2])
-            .when(apply_split_condition & match_grid_successful_condition)
-            .then(grid_extracted_parts.struct[2])
-            .otherwise(pl.col("column_label"))
+            pl.when(ls_condition & match_ls_successful_condition)
+            .then(ls_extracted_parts.struct[0].str.strip_prefix("["))
+            .otherwise(
+                pl.when(apply_split_condition & match_multi_successful_condition)
+                .then(multi_extracted_parts.struct[2])
+                .when(apply_split_condition & match_grid_successful_condition)
+                .then(grid_extracted_parts.struct[2])
+                .otherwise(pl.col("column_label"))
+            )
         )
 
         df_categorized = df_categorized.with_columns(

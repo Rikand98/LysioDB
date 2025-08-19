@@ -43,12 +43,10 @@ class Export:
                 "Percentage DataFrame is empty or None. Skipping 'Percentages' sheet."
             )
 
-        if (
-            self.database.ranked_df is not None
-            and not self.database.ranked_df.is_empty()
-        ):
-            sheets_to_write["Ranks"] = self.database.ranked_df
-            print("Added 'Ranks' sheet.")
+        if self.database.ranked_dfs is not None:
+            for q, ranked_df in self.database.ranked_dfs.items():
+                sheets_to_write[f"Ranked {q}"] = ranked_df
+                print(f"Added 'Ranked {q}' sheet.")
         else:
             print("Ranked DataFrame is empty or None. Skipping 'Ranks' sheet.")
 

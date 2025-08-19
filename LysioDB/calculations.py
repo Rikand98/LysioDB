@@ -296,6 +296,30 @@ class Calculations:
             .iter_rows(named=True)
         )
 
+        # for q_id, labels_map in self.database.meta.variable_value_labels.items():
+        #     question_type = self.database.question_df.filter(
+        #         pl.col("question") == q_id
+        #     ).select("question_type")
+        #     if question_type.is_empty():
+        #         continue
+        #
+        #     if question_type.item() == "multi_response":
+        #         if (q_id, str(1)) not in question_value_to_label_map:
+        #             question_value_to_label_map[(q_id, str(0.0))] = "Not selected"
+        #             question_value_to_label_map[(q_id, str(1.0))] = (
+        #                 self.database.question_df.filter(pl.col("question") == q_id)
+        #                 .select("question_label")
+        #                 .item()
+        #             )
+        #
+        #     else:
+        #         for val, label in labels_map.items():
+        #             if val in self.database.config.NAN_VALUES.keys():
+        #                 question_value_to_label_map[(q_id, "nan")] = label
+        #             else:
+        #                 question_value_to_label_map[(q_id, str(val))] = label
+
+        question_value_to_label_map = {}
         for group in question_groups:
             base_question = group["base_question"]
             question_type = group["question_type"]
@@ -303,6 +327,35 @@ class Calculations:
             value_labels_info = group["value_labels_info"]
             # question_labels = group["question_labels"]
             # base_question_label = group["base_question_label"]
+            if not question_type:
+                continue
+
+            if question_type == "multi_response" or question_type == "grid":
+                for q_id in group["columns"]:
+                    if question_type == "multi_response":
+                        if (q_id, str(1)) not in question_value_to_label_map:
+                            question_value_to_label_map[(q_id, str(0.0))] = (
+                                "Not selected"
+                            )
+                            question_value_to_label_map[(q_id, str(1.0))] = (
+                                self.database.question_df.filter(
+                                    pl.col("question") == q_id
+                                )
+                                .select("question_label")
+                                .item()
+                            )
+                    else:
+                        for val, label in value_labels_info.items():
+                            if val in self.database.config.NAN_VALUES.keys():
+                                question_value_to_label_map[(q_id, "nan")] = label
+                            else:
+                                question_value_to_label_map[(q_id, str(val))] = label
+            else:
+                for val, label in value_labels_info.items():
+                    if val in self.database.config.NAN_VALUES.keys():
+                        question_value_to_label_map[(base_question, "nan")] = label
+                    else:
+                        question_value_to_label_map[(base_question, str(val))] = label
 
             cols_for_this_group = columns + category_cols
             if use_weights:
@@ -356,7 +409,7 @@ class Calculations:
                                 count_expr = (
                                     (pl.col(col) == literal_value_expr)
                                     .sum()
-                                    .cast(pl.Float64)
+                                    .cast(pl.Int64)
                                     .alias(f"{col}_{value}_count")
                                 )
                                 aggregation_expressions.append(count_expr)
@@ -388,7 +441,7 @@ class Calculations:
                                 pl.col(col)
                                 .is_in(nan_values_list)
                                 .sum()
-                                .cast(pl.Float64)
+                                .cast(pl.Int64)
                                 .alias(f"{col}_nan_count")
                             )
                             aggregation_expressions.append(nan_count_expr)
@@ -415,7 +468,7 @@ class Calculations:
                             pl.col(col)
                             .filter(~pl.col(col).is_in(nan_values_list))
                             .count()
-                            .cast(pl.Float64)
+                            .cast(pl.Int64)
                             .alias(f"{col}_total_count")
                         )
                         aggregation_expressions.append(total_count_for_col_expr)
@@ -424,7 +477,7 @@ class Calculations:
                                 pl.when(~pl.col(col).is_in(nan_values_list))
                                 .then(pl.col(self.database.config.WEIGHT_COLUMN))
                                 .sum()
-                                .cast(pl.Float64)
+                                .cast(pl.Int64)
                                 .alias(f"{col}_total_weighted_count")
                             )
                             aggregation_expressions.append(
@@ -571,10 +624,13 @@ class Calculations:
                     base_question,
                     columns,
                     value_labels_info,
+                    question_value_to_label_map,
                     use_weights,
                     category_cols,
                 )
-                self.database.ranked_df = pl.concat(ranking_results, how="diagonal")
+                self.database.ranked_dfs[base_question] = pl.concat(
+                    ranking_results, how="diagonal"
+                )
 
             elif question_type in ["open_text", "numeric_other", "unknown"]:
                 pass
@@ -728,31 +784,6 @@ class Calculations:
                 final_results_df, on="question", how="left"
             )
 
-            question_value_to_label_map = {}
-
-            for q_id, labels_map in self.database.meta.variable_value_labels.items():
-                question_type = self.database.question_df.filter(
-                    pl.col("question") == q_id
-                ).select("question_type")
-                if question_type.is_empty():
-                    continue
-
-                if question_type.item() == "multi_response":
-                    if (q_id, str(1)) not in question_value_to_label_map:
-                        question_value_to_label_map[(q_id, str(0.0))] = "Not selected"
-                        question_value_to_label_map[(q_id, str(1.0))] = (
-                            self.database.question_df.filter(pl.col("question") == q_id)
-                            .select("question_label")
-                            .item()
-                        )
-
-                else:
-                    for val, label in labels_map.items():
-                        if val in self.database.config.NAN_VALUES.keys():
-                            question_value_to_label_map[(q_id, "nan")] = label
-                        else:
-                            question_value_to_label_map[(q_id, str(val))] = label
-
             final_result_ordered_df = (
                 final_result_ordered_df.with_columns(
                     [
@@ -843,6 +874,7 @@ class Calculations:
         base_question: str,
         columns: List[str],
         value_labels_info: Optional[Dict[Any, str]],
+        question_value_to_label_map: Optional[Dict[Any, str]],
         use_weights: bool,
         category_cols: List[str],
     ) -> List[pl.DataFrame]:
@@ -854,7 +886,6 @@ class Calculations:
         """
 
         ranking_category_dfs: List[pl.DataFrame] = []
-
         possible_values = []
         if value_labels_info:
             nan_values_config = self.database.config.NAN_VALUES
@@ -1052,7 +1083,7 @@ class Calculations:
                     percentage_calc_exprs
                 )
 
-            selected_cols = [pl.col("ranked_item_value").alias("Ranked Item")]
+            selected_cols = [pl.col("ranked_item_value")]
 
             count_cols = [
                 pl.col(f"rank_{rank_value}_count").alias(f"Rank {rank_value} Count")
@@ -1106,12 +1137,23 @@ class Calculations:
             )
 
             per_category_df = aggregated_ranking_df.select(selected_cols).sort(
-                "Ranked Item"
+                "ranked_item_value"
             )
 
             per_category_df = per_category_df.with_columns(
-                pl.lit(category_col).alias("Category")
-            ).select(["Category"] + per_category_df.columns)
+                (pl.lit(category_col).alias("Category")),
+                (
+                    pl.col("ranked_item_value")
+                    .cast(pl.Float64)
+                    .map_elements(
+                        lambda x: question_value_to_label_map.get(
+                            (base_question, str(x)), None
+                        ),
+                        return_dtype=pl.Utf8,
+                    )
+                    .alias("Ranked Item")
+                ),
+            ).select(["Category", "Ranked Item"] + per_category_df.columns)
 
             ranking_category_dfs.append(per_category_df)
 
