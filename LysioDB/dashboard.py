@@ -495,7 +495,7 @@ class Dashboard:
             for label in df_long["answer_label"].unique():
                 df_long = df_long.with_columns(
                     pl.col("answer_label")
-                    .str.replace(label, f"{answer_prefix} {label}")
+                    .str.replace(label, f"{answer_prefix}-{label}")
                     .alias("answer_label")
                 )
                 if label in exclude_answers:

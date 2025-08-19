@@ -346,13 +346,16 @@ class Calculations:
                             )
                     else:
                         for val, label in value_labels_info.items():
-                            if val in self.database.config.NAN_VALUES.keys():
+                            if (
+                                int(float(val))
+                                in self.database.config.NAN_VALUES.keys()
+                            ):
                                 question_value_to_label_map[(q_id, "nan")] = label
                             else:
                                 question_value_to_label_map[(q_id, str(val))] = label
             else:
                 for val, label in value_labels_info.items():
-                    if val in self.database.config.NAN_VALUES.keys():
+                    if int(float(val)) in self.database.config.NAN_VALUES.keys():
                         question_value_to_label_map[(base_question, "nan")] = label
                     else:
                         question_value_to_label_map[(base_question, str(val))] = label
@@ -783,7 +786,6 @@ class Calculations:
             final_result_ordered_df = question_order_df.join(
                 final_results_df, on="question", how="left"
             )
-
             final_result_ordered_df = (
                 final_result_ordered_df.with_columns(
                     [
