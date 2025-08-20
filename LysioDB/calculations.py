@@ -353,7 +353,7 @@ class Calculations:
                                 question_value_to_label_map[(q_id, "nan")] = label
                             else:
                                 question_value_to_label_map[(q_id, str(val))] = label
-            else:
+            elif question_type == "single_choice" or question_type == "ranking":
                 for val, label in value_labels_info.items():
                     if int(float(val)) in self.database.config.NAN_VALUES.keys():
                         question_value_to_label_map[(base_question, "nan")] = label

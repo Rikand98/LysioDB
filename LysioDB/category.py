@@ -9,15 +9,19 @@ class Category:
     def create_categories(self) -> pl.DataFrame:
         print("\n--- Creating categories ---")
         base = {
-            "label": ["category", "column"],
-            "totalt": ["total", "1==1"],
+            "header": ["category", "column", "label"],
+            "totalt": ["total", "1==1", "Totalt"],
         }
-        full_data = {**base, **self.database.config.category_data}
+        full_data = {
+            key: val + [""] * (3 - len(val))
+            for key, val in {**base, **self.database.config.category_data}.items()
+        }
         category_df = pl.DataFrame(full_data)
+        print(category_df)
 
-        labels = pl.Series(category_df.columns)[1:]
-        types = pl.Series(category_df.filter(pl.col("label") == "category").row(0)[1:])
-        columns = pl.Series(category_df.filter(pl.col("label") == "column").row(0)[1:])
+        header = pl.Series(category_df.columns)[1:]
+        types = pl.Series(category_df.filter(pl.col("header") == "category").row(0)[1:])
+        columns = pl.Series(category_df.filter(pl.col("header") == "column").row(0)[1:])
 
         exprs = []
         categories = []
@@ -26,7 +30,7 @@ class Category:
         if column_unique_mask.any():
             source_cols = columns.filter(column_unique_mask).to_list()
 
-            for col, src_col in zip(labels.filter(column_unique_mask), source_cols):
+            for col, src_col in zip(header.filter(column_unique_mask), source_cols):
                 unique_values = (
                     self.database.df.lazy()
                     .select(pl.col(src_col).unique())
@@ -36,7 +40,12 @@ class Category:
                 )
 
                 cat_type = (
-                    category_df.filter(pl.col("label") == "category")
+                    category_df.filter(pl.col("header") == "category")
+                    .select(pl.col(col))
+                    .item(0, 0)
+                )
+                label = (
+                    category_df.filter(pl.col("header") == "label")
                     .select(pl.col(col))
                     .item(0, 0)
                 )
@@ -44,7 +53,7 @@ class Category:
                     value_labels = self.database.metadata.get_value_labels(src_col)
                     for val in unique_values:
                         val_label = value_labels.get(val, str(val))
-                        name = f"{val_label} {col}"
+                        name = f"{label} {val_label}" if label else str(val_label)
                         exprs.append(
                             pl.when(pl.col(src_col) == val)
                             .then(1)
@@ -68,7 +77,7 @@ class Category:
 
         double_mask = types == "double"
         if double_mask.any():
-            for col in labels.filter(double_mask):
+            for col in header.filter(double_mask):
                 cols = (
                     category_df.filter(pl.col("label").is_in(["column"]))
                     .select(pl.col(col))
@@ -95,14 +104,14 @@ class Category:
         total_mask = types == "total"
         if total_mask.any():
             exprs.extend(
-                pl.lit(1).cast(pl.Int32).alias(col) for col in labels.filter(total_mask)
+                pl.lit(1).cast(pl.Int32).alias(col) for col in header.filter(total_mask)
             )
             categories.append("totalt")
 
         single_mask = types == "single"
         if single_mask.any():
             for col, cond in zip(
-                labels.filter(single_mask), columns.filter(single_mask)
+                header.filter(single_mask), columns.filter(single_mask)
             ):
                 try:
                     expr = eval(cond, {"pl": pl})
