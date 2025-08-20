@@ -118,7 +118,10 @@ class Transform:
         return database_df
 
     def map(
-        database_path: str, old_database_paths: dict, new_path: str = "mapped_db.sav"
+        database_path: str,
+        other_database_paths: dict,
+        new_path: str = "mapped_db.sav",
+        original_id: str = "2025",
     ):
         """
         Standardizes old datasets to match the 2025 schema and merges them
@@ -128,10 +131,10 @@ class Transform:
         database_df = pl.from_pandas(database_df_pd)
 
         base_questions = database_meta.column_names_to_labels
-        database_df = database_df.with_columns(pl.lit("2025").alias("year"))
+        database_df = database_df.with_columns(pl.lit(original_id).alias("ID"))
         merged_dfs = [database_df]
 
-        for year, path in old_database_paths:
+        for id, path in other_database_paths:
             df_pd, meta = pystat.read_sav(path)
             df = pl.from_pandas(df_pd)
 
@@ -258,13 +261,13 @@ class Transform:
 
                             else:
                                 print(
-                                    f"{year} - {old_col}: {old_label} did not find a strong match"
+                                    f"{id} - {old_col}: {old_label} did not find a strong match"
                                 )
 
             df = (
                 df.rename(question_mapping)
                 .select(question_mapping.values())
-                .with_columns(pl.lit(year).alias("year"))
+                .with_columns(pl.lit(id).alias("ID"))
             )
 
             merged_dfs.append(df)
