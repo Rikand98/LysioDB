@@ -17,7 +17,6 @@ class Category:
             for key, val in {**base, **self.database.config.category_data}.items()
         }
         category_df = pl.DataFrame(full_data)
-        print(category_df)
 
         header = pl.Series(category_df.columns)[1:]
         types = pl.Series(category_df.filter(pl.col("header") == "category").row(0)[1:])
