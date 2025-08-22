@@ -509,9 +509,9 @@ class Calculations:
                     grouped_agg_df = grouped_agg_df.filter(
                         pl.col(category_col).is_not_null()
                     )
-                    grouped_agg_df = grouped_agg_df.rename({category_col: "Category"})
+                    grouped_agg_df = grouped_agg_df.rename({category_col: "category"})
                     grouped_agg_df = grouped_agg_df.with_columns(
-                        pl.lit(category_col).alias("Category")
+                        pl.lit(category_col).alias("category")
                     )
                     percentage_expressions = []
 
@@ -554,7 +554,7 @@ class Calculations:
                                         )
                                 else:
                                     print(
-                                        f"Warning: Count column '{count_col_name}' not found for base question '{base_question}', column '{col}', value '{value}', category '{category_col}'. Skipping percentage."
+                                        f"Warning: count column '{count_col_name}' not found for base question '{base_question}', column '{col}', value '{value}', category '{category_col}'. Skipping percentage."
                                     )
 
                             nan_count_col_name = f"{col}_nan_count"
@@ -644,7 +644,7 @@ class Calculations:
             # combined_df = combined_df.select(pl.exclude("^.*_weighted$"))
 
             unpivot_index_vars = [
-                "Category",
+                "category",
             ]
             metric_suffixes = (
                 "_count",
@@ -769,7 +769,7 @@ class Calculations:
                 "metric_type",
             ]
 
-            pivot_column = "Category"
+            pivot_column = "category"
 
             pivot_value = "value"
 
@@ -1088,12 +1088,12 @@ class Calculations:
             selected_cols = [pl.col("ranked_item_value")]
 
             count_cols = [
-                pl.col(f"rank_{rank_value}_count").alias(f"Rank {rank_value} Count")
+                pl.col(f"rank_{rank_value}_count").alias(f"Rank {rank_value} count")
                 for rank_value in range(1, max_rank + 1)
                 if f"rank_{rank_value}_count" in aggregated_ranking_df.columns
             ]
             missing_count_cols = [
-                pl.lit(0.0).alias(f"Rank {rank_value} Count")
+                pl.lit(0.0).alias(f"Rank {rank_value} count")
                 for rank_value in range(1, max_rank + 1)
                 if f"rank_{rank_value}_count" not in aggregated_ranking_df.columns
             ]
@@ -1143,7 +1143,7 @@ class Calculations:
             )
 
             per_category_df = per_category_df.with_columns(
-                (pl.lit(category_col).alias("Category")),
+                (pl.lit(category_col).alias("category")),
                 (
                     pl.col("ranked_item_value")
                     .cast(pl.Float64)
@@ -1155,7 +1155,7 @@ class Calculations:
                     )
                     .alias("Ranked Item")
                 ),
-            ).select(["Category", "Ranked Item"] + per_category_df.columns)
+            ).select(["category", "Ranked Item"] + per_category_df.columns)
 
             ranking_category_dfs.append(per_category_df)
 
@@ -1208,11 +1208,9 @@ class Calculations:
             if replace_expressions:
                 df_clean = df_clean.with_columns(replace_expressions)
 
-        all_questions = [
-            q for qlist in self.database.config.area_map.values() for q in qlist
-        ]
-        if not all_questions:
-            all_questions = self.database.question_df["question"].to_list()
+        all_questions = self.database.question_df.filter(
+            pl.col("question_type") != "open_text"
+        )["question"].to_list()
         questions_present = [q for q in all_questions if q in df_clean.columns]
 
         if correlate:
@@ -1226,65 +1224,23 @@ class Calculations:
             print("\n--- calculations done ---")
             return self.database.index
 
-        if self.database.categories.is_empty():
-            print("Calculating overall index.")
-            df_long = df_clean.select(
-                [weight_column] + questions_present if weights else questions_present
-            ).melt(
-                id_vars=[weight_column] if weights else [],
-                value_vars=questions_present,
-                variable_name="Question",
-                value_name="Value",
-            )
-
-            df_long = df_long.drop_nulls(subset=["Value"])
-
-            if df_long.is_empty():
-                print(
-                    "Warning: No valid data after dropping nulls for overall index calculation."
-                )
-                self.database.index = pl.DataFrame()
-                print("\n--- calculations done ---")
-                return self.database.index
-
-            if weights and weight_column in df_long.columns:
-                overall_index_expr = (
-                    pl.col("Value").fill_null(1) * pl.col(weight_column).fill_null(0)
-                ).sum() / pl.col(weight_column).fill_null(1).sum()
-            else:
-                overall_index_expr = pl.col("Value").mean()
-
-            overall_index_df = (
-                df_long.select(overall_index_expr.alias("Index"))
-                .with_columns(pl.lit("Overall").alias("Category"))
-                .select(["Category", "Index"])
-            )
-
-            self.database.index = overall_index_df.with_columns(
-                pl.col("Index").round(5)
-            )
-            print("Overall index calculation complete.")
-
-            print("\n--- calculations done ---")
-            return self.database.index
-
         print("Calculating category-based index.")
         categories = self.database.categories
 
-        results_list = []
+        area_list = []
+        individual_list = []
 
         area_map_list = []
         if self.database.config.area_map.items():
             for area_name, questions in self.database.config.area_map.items():
                 for question in questions:
                     area_map_list.append(
-                        {"Question": question, "Frågeområde": area_name}
+                        {"question": question, "frågeområde": area_name}
                     )
-        if not self.database.config.area_map.items():
-            for question in all_questions:
-                area_map_list.append({"Question": question, "Frågeområde": "Totalt"})
-
         area_map_df = pl.DataFrame(area_map_list)
+        total_df = self.database.question_df.select("question").with_columns(
+            frågeområde=pl.lit("Totalt")
+        )
 
         for category_column in categories:
             if category_column not in df_clean.columns:
@@ -1296,7 +1252,7 @@ class Calculations:
             category_membership_value = 1
             df_category_filtered = (
                 df_clean.filter(pl.col(category_column) == category_membership_value)
-                .with_columns(pl.lit(category_column).alias("Category"))
+                .with_columns(pl.lit(category_column).alias("category"))
                 .drop(category_column)
             )
             nan_flag_cols = [
@@ -1308,19 +1264,19 @@ class Calculations:
             if not nan_flag_cols:
                 nan_counts = pl.DataFrame(
                     {
-                        "Question": pl.Series([], dtype=pl.Utf8),
-                        "Nan_Count": pl.Series([], dtype=pl.Float64),
+                        "question": pl.Series([], dtype=pl.Utf8),
+                        "nan_count": pl.Series([], dtype=pl.Float64),
                     }
                 )
             else:
                 nan_boolean_df = df_category_filtered.select(nan_flag_cols)
                 nan_counts = nan_boolean_df.sum().transpose(
                     include_header=True,
-                    header_name="Question",
-                    column_names=["Nan_Count"],
+                    header_name="question",
+                    column_names=["nan_count"],
                 )
                 nan_counts = nan_counts.with_columns(
-                    pl.col("Question").str.replace("_was_nan_value_code$", "")
+                    pl.col("question").str.replace("_was_nan_value_code$", "")
                 )
 
             if df_category_filtered.is_empty():
@@ -1330,23 +1286,23 @@ class Calculations:
                 continue
 
             if weights:
-                select_columns = ["Category", weight_column] + questions_present
+                select_columns = ["category", weight_column] + questions_present
             else:
-                select_columns = ["Category"] + questions_present
+                select_columns = ["category"] + questions_present
 
             melted_df = (
                 df_category_filtered.select(select_columns)
                 .melt(
-                    id_vars=["Category", weight_column] if weights else ["Category"],
+                    id_vars=["category", weight_column] if weights else ["category"],
                     value_vars=questions_present,
-                    variable_name="Question",
-                    value_name="Value",
+                    variable_name="question",
+                    value_name="value",
                 )
-                .with_columns(pl.col("Value").cast(pl.Float64, strict=False))
+                .with_columns(pl.col("value").cast(pl.Float64, strict=False))
             )
-            melted_df = melted_df.join(nan_counts, on="Question", how="left")
+            melted_df = melted_df.join(nan_counts, on="question", how="left")
 
-            melted_df = melted_df.drop_nans(subset=["Value"])
+            melted_df = melted_df.drop_nans(subset=["value"])
 
             if melted_df.is_empty():
                 print(
@@ -1354,9 +1310,11 @@ class Calculations:
                 )
                 continue
 
-            melted_df = melted_df.join(area_map_df, on="Question", how="left")
+            melted_area_df = melted_df.join(area_map_df, on="question", how="left")
+            melted_df = melted_df.join(total_df, on="question", how="left")
 
-            melted_df = melted_df.filter(pl.col("Frågeområde").is_not_null())
+            melted_df = melted_df.filter(pl.col("frågeområde").is_not_null())
+            melted_area_df = melted_area_df.filter(pl.col("frågeområde").is_not_null())
 
             if melted_df.is_empty():
                 print(
@@ -1386,7 +1344,7 @@ class Calculations:
                         if numeric_values:
                             question_meta_ranges.append(
                                 {
-                                    "Question": q_name,
+                                    "question": q_name,
                                     "meta_original_min": min(numeric_values),
                                     "meta_original_max": max(numeric_values),
                                 }
@@ -1403,13 +1361,13 @@ class Calculations:
                 question_meta_ranges_df = pl.DataFrame(
                     question_meta_ranges,
                     schema={
-                        "Question": pl.Utf8,
+                        "question": pl.Utf8,
                         "meta_original_min": pl.Float64,
                         "meta_original_max": pl.Float64,
                     },
                 )
                 melted_df = melted_df.join(
-                    question_meta_ranges_df, on="Question", how="left"
+                    question_meta_ranges_df, on="question", how="left"
                 )
                 if "meta_original_min" not in melted_df.columns:
                     print(
@@ -1424,7 +1382,7 @@ class Calculations:
                                 > pl.col("meta_original_min")
                             )
                             .then(
-                                (pl.col("Value") - pl.col("meta_original_min"))
+                                (pl.col("value") - pl.col("meta_original_min"))
                                 * (
                                     (target_max - target_min)
                                     / (
@@ -1434,172 +1392,122 @@ class Calculations:
                                 )
                                 + target_min
                             )
-                            .otherwise(pl.col("Value"))
-                            .alias("Value_scaled")
+                            .otherwise(pl.col("value"))
+                            .alias("value_scaled")
                         )
-                        .drop(["meta_original_min", "meta_original_max", "Value"])
-                        .rename({"Value_scaled": "Value"})
+                        .drop(["meta_original_min", "meta_original_max", "value"])
+                        .rename({"value_scaled": "value"})
                     )
-                    melted_df = melted_df.with_columns(pl.col("Value").cast(pl.Float64))
+                    melted_df = melted_df.with_columns(pl.col("value").cast(pl.Float64))
 
             if weights and weight_column in melted_df.columns:
                 individual_index_expr = (
-                    (pl.col("Value") * pl.col(weight_column)).sum()
+                    (pl.col("value") * pl.col(weight_column)).sum()
                     / pl.col(weight_column).sum()
-                ).alias("Individual_Index")
+                ).alias("individual_index")
             else:
-                individual_index_expr = pl.mean("Value").alias("Individual_Index")
+                individual_index_expr = pl.mean("value").alias("individual_index")
 
             individual_question_index_df = (
                 melted_df.fill_null(0)
-                .group_by(["Category", "Question", "Frågeområde", "Nan_Count"])
+                .group_by(["category", "question", "frågeområde", "nan_count"])
                 .agg(
                     [
                         individual_index_expr,
-                        pl.count("Value").alias("Count_Individual"),
+                        pl.count("value").alias("count_individual"),
                     ]
                 )
                 .with_columns(
                     pl.when(
-                        (pl.col("Count_Individual") + pl.col("Nan_Count"))
+                        (pl.col("count_individual") + pl.col("nan_count"))
                         < self.database.config.MINIMUM_COUNT
                     )
                     .then(pl.lit(None))
-                    .otherwise(pl.col("Individual_Index"))
-                    .alias("Individual_Index")
+                    .otherwise(pl.col("individual_index"))
+                    .alias("individual_index")
                     .cast(pl.Float64)
                 )
-                .drop("Count_Individual")
-                .drop("Nan_Count")
+                .drop("count_individual")
+                .drop("nan_count")
             )
             melted_df = melted_df.join(
                 individual_question_index_df,
-                on=["Category", "Question", "Frågeområde"],
+                on=["category", "question", "frågeområde"],
                 how="left",
             )
 
             if weights and weight_column in melted_df.columns:
                 area_index_expr = (
-                    pl.col("Value") * pl.col(weight_column)
+                    pl.col("value") * pl.col(weight_column)
                 ).sum() / pl.col(weight_column).sum()
             else:
-                area_index_expr = pl.col("Value").mean()
+                area_index_expr = pl.col("value").mean()
 
             area_index_df = (
-                melted_df.group_by(["Category", "Frågeområde"])
+                melted_area_df.group_by(["category", "frågeområde"])
                 .agg(
                     [
-                        area_index_expr.alias("Area_Index"),
+                        area_index_expr.alias("area_Index"),
                     ]
                 )
-                .with_columns(pl.col("Area_Index").alias("Area_Index").cast(pl.Float64))
+                .with_columns(pl.col("area_Index").alias("area_Index").cast(pl.Float64))
             )
 
-            final_category_df = individual_question_index_df.join(
-                area_index_df, on=["Category", "Frågeområde"], how="left"
-            )
+            individual_list.append((individual_question_index_df))
+            area_list.append((area_index_df))
 
-            selected_cols_for_category_df = [
-                pl.col("Category"),
-                pl.col("Frågeområde"),
-                pl.col("Question"),
-                pl.col("Individual_Index"),
-                pl.col("Area_Index"),
-            ]
+        if individual_list:
+            individual_result = pl.concat(individual_list, how="vertical")
+            area_result = pl.concat(area_list, how="vertical")
 
-            final_category_df = final_category_df.select(selected_cols_for_category_df)
-
-            results_list.append(final_category_df)
-
-        if results_list:
-            final_result = pl.concat(results_list, how="vertical")
-
-            individual_index_pivot = final_result.pivot(
-                index="Category",
-                columns=["Frågeområde", "Question"],
-                values="Individual_Index",
+            individual_index_pivot = individual_result.pivot(
+                index="category",
+                on="question",
+                values="individual_index",
                 aggregate_function="first",
             )
 
-            area_index_long = final_result.select(
-                ["Category", "Frågeområde", "Area_Index"]
-            ).melt(
-                id_vars=["Category", "Frågeområde"],
-                value_name="Area_Index_Value",
-            )
-
-            area_index_pivot = area_index_long.pivot(
-                index="Category",
-                columns="Frågeområde",
-                values="Area_Index_Value",
+            area_index_pivot = area_result.pivot(
+                index="category",
+                on="frågeområde",
+                values="area_Index",
                 aggregate_function="first",
             )
 
             final_result_wide = individual_index_pivot.join(
-                area_index_pivot, on="Category", how="left"
+                area_index_pivot, on="category", how="left"
+            ).fill_null(0)
+
+            ordered_columns = (
+                ["category"]
+                + [q for q in all_questions if q in final_result_wide.columns]
+                + [
+                    a
+                    for a in area_map_df.select(pl.col("frågeområde"))
+                    .unique()["frågeområde"]
+                    .to_list()
+                    if a in final_result_wide.columns
+                ]
+            )
+            final_result_wide = final_result_wide.select(ordered_columns)
+
+            long_df = final_result_wide.unpivot(
+                index="category", variable_name="question_area", value_name="value"
             )
 
-            ordered_columns = ["Category"]
-            existing_columns = final_result_wide.columns
+            final_pivot = long_df.pivot(
+                index="question_area",
+                on="category",
+                values="value",
+                aggregate_function="first",
+            )
 
-            if self.database.config.area_map.items():
-                for area_name, questions in self.database.config.area_map.items():
-                    for q in questions:
-                        col_string_representation = f'{{"{area_name}","{q}"}}'
-                        if col_string_representation in existing_columns:
-                            ordered_columns.append(col_string_representation)
-                        else:
-                            print(
-                                f"Warning: Individual question column '{col_string_representation}' not found in final wide result. Skipping column ordering."
-                            )
-
-                    area_index_col_name = area_name
-                    if area_index_col_name in existing_columns:
-                        ordered_columns.append(area_index_col_name)
-                    else:
-                        print(
-                            f"Warning: Area index column '{area_index_col_name}' not found in final wide result. Skipping column ordering for this area index."
-                        )
-            if not self.database.config.area_map.items():
-                for question in all_questions:
-                    col_string_representation = f'{{"Totalt","{question}"}}'
-                    if col_string_representation in existing_columns:
-                        ordered_columns.append(col_string_representation)
-                    else:
-                        print(
-                            f"Warning: Individual question column '{col_string_representation}' not found in final wide result. Skipping column ordering."
-                        )
-
-                area_index_col_name = "Totalt"
-                if area_index_col_name in existing_columns:
-                    ordered_columns.append(area_index_col_name)
-                else:
-                    print(
-                        f"Warning: Area index column '{area_index_col_name}' not found in final wide result. Skipping column ordering for this area index."
-                    )
-
-            final_ordered_cols_present = [
-                col for col in ordered_columns if col in existing_columns
-            ]
-            final_result_ordered = final_result_wide.select(final_ordered_cols_present)
-            rename_mapping = {}
-            if self.database.config.area_map.items():
-                for area_name, questions in self.database.config.area_map.items():
-                    for q in questions:
-                        old_col_name = f'{{"{area_name}","{q}"}}'
-                        if old_col_name in final_result_ordered.columns:
-                            rename_mapping[old_col_name] = q
-            if not self.database.config.area_map.items():
-                for question in all_questions:
-                    old_col_name = f'{{"Totalt","{question}"}}'
-                    if old_col_name in final_result_ordered.columns:
-                        rename_mapping[old_col_name] = question
-
-            if rename_mapping:
-                final_result_ordered = final_result_ordered.rename(rename_mapping)
+            ordered_columns_final = ["question_area"] + sorted(final_pivot.columns[1:])
+            final_result_ordered = final_pivot.select(ordered_columns_final)
 
             self.database.index_df = final_result_ordered
-            print("Category-based index calculation complete.")
+            print("\n--- Transformation complete ---")
+            return final_result_ordered
 
     def _correlate(
         self, df: pl.DataFrame, correlate_area: str, questions: List[str]
@@ -1627,7 +1535,7 @@ class Calculations:
                 f"Error: Correlate area '{correlate_area}' not found in area_map. Cannot calculate correlation."
             )
             self.database.correlation_df = pl.DataFrame(
-                {"Category": [], "Area": [], "Question": [], "Correlation": []}
+                {"category": [], "area": [], "question": [], "correlation": []}
             )
             return self.database.correlation_df
 
@@ -1637,7 +1545,7 @@ class Calculations:
                 f"Warning: No questions defined for correlate area '{correlate_area}'. Cannot calculate correlation."
             )
             self.database.correlation_df = pl.DataFrame(
-                {"Category": [], "Area": [], "Question": [], "Correlation": []}
+                {"category": [], "area": [], "question": [], "correlation": []}
             )
             return self.database.correlation_df
 
@@ -1653,7 +1561,7 @@ class Calculations:
                     f"Warning: Need at least two numeric questions in area '{correlate_area}' for overall correlation. Skipping."
                 )
                 self.database.correlation_df = pl.DataFrame(
-                    {"Category": [], "Area": [], "Question": [], "Correlation": []}
+                    {"category": [], "area": [], "question": [], "correlation": []}
                 )
                 return self.database.correlation_df
 
@@ -1688,10 +1596,10 @@ class Calculations:
                             overall_corr_list.append(
                                 pl.DataFrame(
                                     {
-                                        "Category": ["Overall"],
-                                        "Area": [correlate_area],
-                                        "Question": [question],
-                                        "Correlation": [corr_val],
+                                        "category": ["Overall"],
+                                        "area": [correlate_area],
+                                        "question": [question],
+                                        "correlation": [corr_val],
                                     }
                                 )
                             )
@@ -1719,12 +1627,12 @@ class Calculations:
                 pl.concat(overall_corr_list, how="vertical")
                 if overall_corr_list
                 else pl.DataFrame(
-                    {"Category": [], "Area": [], "Question": [], "Correlation": []}
+                    {"category": [], "area": [], "question": [], "correlation": []}
                 )
             )
 
             self.database.correlation_df = final_correlation_df.with_columns(
-                pl.col("Correlation").round(5)
+                pl.col("correlation").round(5)
             )
             print("Overall correlation calculations complete.")
             return self.database.correlation_df
@@ -1735,7 +1643,7 @@ class Calculations:
             category_membership_value = 1
             filtered_df = (
                 df.filter(pl.col(category_col) == category_membership_value)
-                .with_columns(pl.lit(category_col).alias("Category"))
+                .with_columns(pl.lit(category_col).alias("category"))
                 .drop(category_col)
             )
 
@@ -1799,10 +1707,10 @@ class Calculations:
                             correlation_results_list.append(
                                 pl.DataFrame(
                                     {
-                                        "Category": category_col,
-                                        "Area": correlate_area,
-                                        "Question": question,
-                                        "Correlation": corr_val,
+                                        "category": category_col,
+                                        "area": correlate_area,
+                                        "question": question,
+                                        "correlation": corr_val,
                                     }
                                 )
                             )
@@ -1831,12 +1739,12 @@ class Calculations:
             pl.concat(correlation_results_list, how="diagonal")
             if correlation_results_list
             else pl.DataFrame(
-                {"Category": [], "Area": [], "Question": [], "Correlation": []}
+                {"category": [], "area": [], "question": [], "correlation": []}
             )
         )
 
         self.database.correlate_df = final_correlation_df
-        print("Correlation calculations complete.")
+        print("correlation calculations complete.")
         return self.database.correlate_df
 
     def eni(self, area: str, weights=False):
@@ -1913,7 +1821,7 @@ class Calculations:
             category_membership_value = 1
             df_category_filtered = (
                 df_clean.filter(pl.col(category_column) == category_membership_value)
-                .with_columns(pl.lit(category_column).alias("Category"))
+                .with_columns(pl.lit(category_column).alias("category"))
                 .drop(category_column)
             )
             nan_flag_cols = [
@@ -1925,19 +1833,19 @@ class Calculations:
             if not nan_flag_cols:
                 nan_counts = pl.DataFrame(
                     {
-                        "Question": pl.Series([], dtype=pl.Utf8),
-                        "Nan_Count": pl.Series([], dtype=pl.Float64),
+                        "question": pl.Series([], dtype=pl.Utf8),
+                        "nan_count": pl.Series([], dtype=pl.Float64),
                     }
                 )
             else:
                 nan_boolean_df = df_category_filtered.select(nan_flag_cols)
                 nan_counts = nan_boolean_df.sum().transpose(
                     include_header=True,
-                    header_name="Question",
-                    column_names=["Nan_Count"],
+                    header_name="question",
+                    column_names=["nan_count"],
                 )
                 nan_counts = nan_counts.with_columns(
-                    pl.col("Question").str.replace("_was_nan_value_code$", "")
+                    pl.col("question").str.replace("_was_nan_value_code$", "")
                 )
 
             if df_category_filtered.is_empty():
@@ -1947,35 +1855,35 @@ class Calculations:
                 continue
 
             if weights:
-                select_columns = ["Category", weight_column] + questions_present
+                select_columns = ["category", weight_column] + questions_present
             else:
-                select_columns = ["Category"] + questions_present
+                select_columns = ["category"] + questions_present
             df_category = df_category_filtered.select(select_columns).with_columns(
-                pl.mean_horizontal(questions_present).alias("Value")
+                pl.mean_horizontal(questions_present).alias("value")
             )
 
             eni_df = df_category.with_columns(
-                pl.when(pl.col("Value").is_between(3.0, 4.19))
+                pl.when(pl.col("value").is_between(3.0, 4.19))
                 .then(pl.lit("2"))
-                .when(pl.col("Value") >= 4.2)
+                .when(pl.col("value") >= 4.2)
                 .then(pl.lit("3"))
                 .otherwise(pl.lit("1"))
                 .alias("ENI_Category")
             )
-            eni_counts_df = eni_df.group_by("Category", "ENI_Category").agg(
+            eni_counts_df = eni_df.group_by("category", "ENI_Category").agg(
                 pl.count().alias("category_count")
             )
-            total_counts_df = eni_df.group_by("Category").agg(
+            total_counts_df = eni_df.group_by("category").agg(
                 pl.count().alias("total_responses")
             )
             eni_proportions_df = (
-                eni_counts_df.join(total_counts_df, on=["Category"], how="left")
+                eni_counts_df.join(total_counts_df, on=["category"], how="left")
                 .with_columns(
                     (pl.col("category_count") / pl.col("total_responses")).alias(
                         "ENI_Proportion"
                     )
                 )
-                .sort("Category", "ENI_Category")
+                .sort("category", "ENI_Category")
             )
 
             results_list.append(eni_proportions_df)
@@ -1984,7 +1892,7 @@ class Calculations:
             final_result = pl.concat(results_list, how="vertical")
 
             pivot = final_result.pivot(
-                index="Category",
+                index="category",
                 columns=["ENI_Category"],
                 values="ENI_Proportion",
                 aggregate_function="first",

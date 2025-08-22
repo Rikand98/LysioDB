@@ -181,13 +181,13 @@ class Export:
 
         direct_columns_to_drop = {
             category
-            for category, config in self.database.config.category_map.items()
+            for category, config in self.database.config.category_data.items()
             if config.get("type") == "direct"
         }
 
         filtered_df = self.database.df.drop(
             [col for col in direct_columns_to_drop if col in self.database.df.columns]
-            + list(self.database.config.category_map.keys())
+            + list(self.database.config.category_data.keys())
         )
 
         if filtered_df is not None and not filtered_df.is_empty():
