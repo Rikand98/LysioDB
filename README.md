@@ -42,7 +42,7 @@ This package is ideal for survey analysis workflows, including weighting, correl
 ## Usage
 
 ### Basic Example
-
+   ```
 ```python
 from LysioDB import Config, Database, Dashboard, Transform
 
@@ -88,7 +88,8 @@ db.calculations.percentages()
 db.calculations.open_text()
 db.export.excel()
 
-## Advanced Usage
+   ```
+### Advanced Usage
 
 - **Custom Transformations**: Use `db.transform.add_background_data(...)` to merge additional datasets or `db.transform.map(...)` for schema alignment across years.
 - **Correlations & Indexing**: Call `db.calculations.correlate(...)` or `db.calculations.index(...)` for advanced stats.
