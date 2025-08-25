@@ -55,8 +55,8 @@ Transform.add_background_data(
 nan = {999: None}
 category_data = {
     "Department": ["unique", "Department"],
-    "Area_1": ["single", 'pl.col("Area").is_in([1,2,3])'],
-    "Area_2": ["single", 'pl.col("Area").is_in([4,5,6])'],
+    "Area_1": ["single", 'pl.col("Area").is_in([1,3,5])'],
+    "Area_2": ["single", 'pl.col("Area").is_in([2,4,6])'],
     "gender": ["column", "gender"],
     "<30": ["single", f"pl.col('age) < {30}"],
     "30-39": ["single", "pl.col('age').is_between(30,39)"],
