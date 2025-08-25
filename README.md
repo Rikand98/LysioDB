@@ -43,7 +43,6 @@ This package is ideal for survey analysis workflows, including weighting, correl
 
 ### Basic Example
    ```
-```python
 from LysioDB import Config, Database, Dashboard, Transform
 
 Transform.add_background_data(
