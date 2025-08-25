@@ -33,7 +33,7 @@ This package is ideal for survey analysis workflows, including weighting, correl
    cd LysioDB
    ```
 
-2. Install dependencies:
+2. Install as a local editable pip package:
    ```
    pip install -e .
    ```
