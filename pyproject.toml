@@ -1,10 +1,21 @@
 [build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
 
 [project]
-name = "LysioDB"
+name = "LysioDB_Rikand"
 version = "0.1"
+authors = [{ name = "Rikard Andersson", email = "rikard@rikand.com" }]
+description = "A Python package for data analysis and visualization with LysioDB"
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
   "numpy",
   "polars",
@@ -20,4 +31,10 @@ dependencies = [
   "thefuzz",
   "xlsxwriter",
   "geopy",
+
 ]
+
+[project.urls]
+Homepage = "https://github.com/Rikand98/LysioDB"
+# Documentation = "https://LysioDB.readthedocs.io"
+Issues = "https://github.com/Rikand98/LysioDB/issues"
