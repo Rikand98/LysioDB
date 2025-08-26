@@ -1310,11 +1310,14 @@ class Calculations:
                 )
                 continue
 
-            melted_area_df = melted_df.join(area_map_df, on="question", how="left")
             melted_df = melted_df.join(total_df, on="question", how="left")
-
             melted_df = melted_df.filter(pl.col("frågeområde").is_not_null())
-            melted_area_df = melted_area_df.filter(pl.col("frågeområde").is_not_null())
+
+            if not area_map_df.is_empty():
+                melted_area_df = melted_df.join(area_map_df, on="question", how="left")
+                melted_area_df = melted_area_df.filter(
+                    pl.col("frågeområde").is_not_null()
+                )
 
             if melted_df.is_empty():
                 print(
@@ -1443,23 +1446,24 @@ class Calculations:
             else:
                 area_index_expr = pl.col("value").mean()
 
-            area_index_df = (
-                melted_area_df.group_by(["category", "frågeområde"])
-                .agg(
-                    [
-                        area_index_expr.alias("area_Index"),
-                    ]
+            if not area_map_df.is_empty():
+                area_index_df = (
+                    melted_area_df.group_by(["category", "frågeområde"])
+                    .agg(
+                        [
+                            area_index_expr.alias("area_Index"),
+                        ]
+                    )
+                    .with_columns(
+                        pl.col("area_Index").alias("area_Index").cast(pl.Float64)
+                    )
                 )
-                .with_columns(pl.col("area_Index").alias("area_Index").cast(pl.Float64))
-            )
+                area_list.append((area_index_df))
 
             individual_list.append((individual_question_index_df))
-            area_list.append((area_index_df))
 
         if individual_list:
             individual_result = pl.concat(individual_list, how="vertical")
-            area_result = pl.concat(area_list, how="vertical")
-
             individual_index_pivot = individual_result.pivot(
                 index="category",
                 on="question",
@@ -1467,28 +1471,34 @@ class Calculations:
                 aggregate_function="first",
             )
 
-            area_index_pivot = area_result.pivot(
-                index="category",
-                on="frågeområde",
-                values="area_Index",
-                aggregate_function="first",
-            )
-
-            final_result_wide = individual_index_pivot.join(
-                area_index_pivot, on="category", how="left"
-            ).fill_null(0)
-
-            ordered_columns = (
-                ["category"]
-                + [q for q in all_questions if q in final_result_wide.columns]
-                + [
-                    a
-                    for a in area_map_df.select(pl.col("frågeområde"))
-                    .unique()["frågeområde"]
-                    .to_list()
-                    if a in final_result_wide.columns
+            if area_list:
+                area_result = pl.concat(area_list, how="vertical")
+                area_index_pivot = area_result.pivot(
+                    index="category",
+                    on="frågeområde",
+                    values="area_Index",
+                    aggregate_function="first",
+                )
+                final_result_wide = individual_index_pivot.join(
+                    area_index_pivot, on="category", how="left"
+                ).fill_null(0)
+                ordered_columns = (
+                    ["category"]
+                    + [q for q in all_questions if q in final_result_wide.columns]
+                    + [
+                        a
+                        for a in area_map_df.select(pl.col("frågeområde"))
+                        .unique()["frågeområde"]
+                        .to_list()
+                        if a in final_result_wide.columns
+                    ]
+                )
+            else:
+                final_result_wide = individual_index_pivot.fill_null(0)
+                ordered_columns = ["category"] + [
+                    q for q in all_questions if q in final_result_wide.columns
                 ]
-            )
+
             final_result_wide = final_result_wide.select(ordered_columns)
 
             long_df = final_result_wide.unpivot(
