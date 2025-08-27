@@ -3,7 +3,7 @@ from LysioDB.category import Category
 from LysioDB.config import Config
 from LysioDB.dashboard import Dashboard
 from LysioDB.export import Export
-from LysioDB.geo import Location
+from LysioDB.location import Location
 from LysioDB.identify import Identify
 from LysioDB.metadata import Metadata
 from LysioDB.power import Power
@@ -40,7 +40,7 @@ class Database:
         self.category = Category(self)
         self.dashboard = Dashboard(self)
         self.export = Export(self)
-        self.geo = Location(self)
+        self.location = Location(self)
         self.identify = Identify(self)
         self.metadata = Metadata(self)
         self.power = Power(self)
