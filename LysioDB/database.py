@@ -7,6 +7,7 @@ from LysioDB.location import Location
 from LysioDB.identify import Identify
 from LysioDB.metadata import Metadata
 from LysioDB.power import Power
+from LysioDB.qr import QR
 from LysioDB.transform import Transform
 import polars as pl
 import polars_readstat as pr
@@ -44,4 +45,5 @@ class Database:
         self.identify = Identify(self)
         self.metadata = Metadata(self)
         self.power = Power(self)
+        self.qr = QR(self)
         self.transform = Transform(self)
