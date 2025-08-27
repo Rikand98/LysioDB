@@ -14,7 +14,7 @@ import json
 import random
 
 
-class Geo:
+class Location:
     def __init__(self, database):
         """
         Initialize the Geo class with a reference to the database.
