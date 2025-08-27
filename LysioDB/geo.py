@@ -7,6 +7,11 @@ from typing import Optional, Tuple, Union
 import time
 from thefuzz import fuzz
 import os
+import re
+import requests
+import urllib.parse
+import json
+import random
 
 
 class Geo:
@@ -327,3 +332,440 @@ class Geo:
             f"Distance calculation complete. Added column: '{distance_col}' (meters)."
         )
         return df
+
+    def get_postnummer(
+        database_path: str,
+        address_col: str = "adress",
+        postnummer_col: str = "postnummer",
+        geocoder: str = "photon",
+        user_agent: str = "LysioDB_Geocoding",
+        api_key: Optional[str] = None,
+        batch_size: int = 100,
+        max_retries: int = 3,
+        sleep_seconds: float = 0.2,
+        append_city: str = ", Lund, Sweden",
+        fallback_postnummer: str = "223 50",
+        path: str = "processed_addresses_with_postnummer.xlsx",
+    ) -> pl.DataFrame:
+        """
+        Processes addresses from an Excel file, expands ranges and letter suffixes, and retrieves postnummer
+        using TomTom or Photon geocoding services, adding a postnummer column.
+
+        Args:
+            database_path (str): Path to the Excel file containing addresses.
+            address_col (str): Column name containing addresses (e.g., 'adress').
+            postnummer_col (str): Name for the new postnummer column (string).
+            geocoder (str): Geocoder to use ('tomtom' or 'photon').
+            user_agent (str): Identifier for Photon API.
+            api_key (str, optional): API key for TomTom.
+            batch_size (int): Number of addresses to process before logging.
+            max_retries (int): Max retries for failed requests.
+            sleep_seconds (float): Delay between requests (0.2 for TomTom, 1.0 for Photon).
+            append_city (str): String to append to addresses for better geocoding accuracy.
+            fallback_postnummer (str): Fallback postnummer for failed lookups.
+            path (str): Path to save the output Excel file.
+
+        Returns:
+            pl.DataFrame: Updated DataFrame with postnummer_col (string).
+        """
+        print(
+            f"\n--- Retrieving postnummer for addresses in column '{address_col}' using {geocoder} ---"
+        )
+
+        # Read Excel file
+        df = pl.read_excel(database_path)
+
+        if address_col not in df.columns:
+            raise ValueError(f"Address column '{address_col}' not found in DataFrame.")
+
+        # Function to expand address ranges and letter suffixes
+        def expand_address_range(address):
+            range_match = re.match(r"(\D+)\s(\d+)\s*-\s*(\d+)", address)
+            letter_match = re.match(r"(\D+)\s(\d+)\s*([A-Z])\s*-\s*([A-Z])", address)
+            single_match = re.match(r"(\D+)\s(\d+)(?:\s*([A-Z]))?", address)
+
+            if range_match:
+                street, start, end = range_match.groups()
+                start, end = int(start), int(end)
+                return [f"{street} {i}" for i in range(start, end + 1)]
+            elif letter_match:
+                street, number, start_letter, end_letter = letter_match.groups()
+                start_idx = ord(start_letter) - ord("A")
+                end_idx = ord(end_letter) - ord("A")
+                return [
+                    f"{street} {number} {chr(i + ord('A'))}"
+                    for i in range(start_idx, end_idx + 1)
+                ]
+            elif single_match:
+                street, number, letter = single_match.groups()
+                address = f"{street} {number}"
+                if letter:
+                    address += f" {letter}"
+                return [address]
+            return []
+
+        # Expand addresses
+        df_expanded = (
+            df.with_columns(
+                pl.col(address_col).map_elements(
+                    expand_address_range, return_dtype=pl.List(pl.Utf8)
+                )
+            )
+            .explode(address_col)
+            .filter(pl.col(address_col).is_not_null())
+            .unique(subset=[address_col])
+            .sort(address_col)
+        )
+
+        # Initialize geocoder
+        if geocoder == "tomtom":
+            api_key = api_key or os.getenv("TOMTOM_API_KEY")
+            if not api_key:
+                raise ValueError(
+                    "TomTom requires an API key (set TOMTOM_API_KEY env var)."
+                )
+            geolocator = TomTom(api_key=api_key)
+            sleep_seconds = 0.2  # ~5 req/s
+        elif geocoder == "photon":
+            geolocator = Photon(user_agent=user_agent)
+            sleep_seconds = 1.0  # Throttled, ~1–2 req/s
+        else:
+            raise ValueError(
+                f"Unsupported geocoder: {geocoder}. Choose 'tomtom' or 'photon'."
+            )
+
+        def get_postnummer_single(address, retries=max_retries):
+            try:
+                full_address = (
+                    f"{address}{append_city}" if address and address.strip() else ""
+                )
+                if not full_address:
+                    return None
+                location = geolocator.geocode(full_address, timeout=10)
+                if location and hasattr(location, "raw"):
+                    if geocoder == "tomtom":
+                        return location.raw.get("address", {}).get("postalCode")
+                    elif geocoder == "photon":
+                        return location.raw.get("properties", {}).get("postcode")
+                return None
+            except (GeocoderTimedOut, GeocoderUnavailable) as e:
+                if retries > 0:
+                    time.sleep(sleep_seconds * 2)
+                    return get_postnummer_single(address, retries - 1)
+                print(
+                    f"Failed to retrieve postnummer for '{address}' after retries: {e}"
+                )
+                return None
+
+        # Check API limits
+        addresses = df_expanded[address_col].unique().to_list()
+        if geocoder == "tomtom" and len(addresses) > 2500:
+            print(
+                f"Warning: {len(addresses)} addresses exceed TomTom free tier (2,500/day)."
+            )
+        elif geocoder == "photon" and len(addresses) > 1000:
+            print(
+                f"Warning: {len(addresses)} addresses may be throttled by Photon public API."
+            )
+
+        # Batch process addresses
+        postnummer_results = {addr: None for addr in addresses}
+        for i in range(0, len(addresses), batch_size):
+            batch = addresses[i : i + batch_size]
+            for addr in batch:
+                postnummer = get_postnummer_single(addr)
+                postnummer_results[addr] = postnummer
+                time.sleep(sleep_seconds)
+            print(
+                f"Processed batch {i // batch_size + 1}/{len(addresses) // batch_size + 1}"
+            )
+
+        # Add postnummer column
+        df_expanded = df_expanded.with_columns(
+            pl.col(address_col)
+            .map_elements(
+                lambda x: postnummer_results.get(x, fallback_postnummer),
+                return_dtype=pl.Utf8,
+            )
+            .alias(postnummer_col)
+        )
+
+        # Save to Excel
+        df_expanded.write_excel(path)
+        print(
+            f"Postnummer retrieval complete. Added column: '{postnummer_col}' (string). Saved to '{path}'."
+        )
+        return df_expanded
+
+    def ratsit_adresses(
+        database_path: str,
+        address_col: str = "Adress",
+        output_columns: list = [
+            "Förnamn",
+            "Efternamn",
+            "Namn",
+            "Ålder",
+            "StreetAddress",
+        ],
+        api_url: str = "https://www.ratsit.se/api/search/combined",
+        batch_size: int = 100,
+        min_sleep_seconds: float = 1.0,
+        max_sleep_seconds: float = 5.0,
+        append_city: str = ", Lund, Sweden",
+        path: str = "register_2.xlsx",
+    ) -> pl.DataFrame:
+        """
+        Processes addresses from an Excel file, expands ranges and letter suffixes, and enriches them with person data
+        from the Ratsit API, adding columns for first name, last name, full name, and age.
+
+        Args:
+            database_path (str): Path to the Excel file containing addresses.
+            address_col (str): Column name containing addresses (e.g., 'Adress3').
+            output_columns (list): List of columns to add (defaults to ['Förnamn', 'Efternamn', 'Namn', 'Ålder']).
+            api_url (str): Ratsit API endpoint URL.
+            batch_size (int): Number of addresses to process before logging.
+            min_sleep_seconds (float): Minimum delay between requests.
+            max_sleep_seconds (float): Maximum delay between requests.
+            append_city (str): String to append to addresses for better API accuracy.
+            path (str): Path to save the output Excel file.
+
+        Returns:
+            pl.DataFrame: DataFrame with expanded addresses and enriched person data.
+        """
+        print(
+            f"\n--- Enriching addresses in column '{address_col}' with Ratsit API ---"
+        )
+
+        # Read Excel file
+        df = pl.read_excel(database_path)
+
+        if address_col not in df.columns:
+            raise ValueError(f"Address column '{address_col}' not found in DataFrame.")
+
+        # Define Ratsit API headers
+        BASE_HEADERS = {
+            "Host": "www.ratsit.se",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:138.0) Gecko/20100101 Firefox/138.0",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Accept-Encoding": "gzip, deflate, br, zstd",
+            "Content-Type": "application/json",
+            "Origin": "https://www.ratsit.se",
+            "Sec-GPC": "1",
+            "Connection": "keep-alive",
+            "Cookie": "CookieConsent={stamp:%27Au+YpcG0LQVoaoC3uNDZ4ksyS7E7ucaVKj27Cj9Pff+F7uFQjiO7KQ==%27%2Cnecessary:true%2Cpreferences:false%2Cstatistics:false%2Cmarketing:false%2Cmethod:%27explicit%27%2Cver:3%2Cutc:1746610013653%2Cregion:%27se%27}; __eoi=ID=bdb222ff22ee4430:T=1746610015:RT=1746610886:S=AA-AfjbpuaFjSuDTzV2XchsqWVgB; _return_url=%7B%22Url%22%3A%22%2Fsok%2Fperson%3Fvem%3DAcaciagatan%25201%2520LIMHAMN%22%2C%22Text%22%3A%22s%5Cu00F6ket%22%7D",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "TE": "trailers",
+        }
+
+        # Function to expand address ranges and letter suffixes
+        def expand_address_range(address):
+            range_match = re.match(r"(\D+)\s(\d+)\s*-\s*(\d+)", address)
+            letter_match = re.match(r"(\D+)\s(\d+)\s*([A-Z])\s*-\s*([A-Z])", address)
+            single_match = re.match(r"(\D+)\s(\d+)(?:\s*([A-Z]))?", address)
+
+            if range_match:
+                street, start, end = range_match.groups()
+                start, end = int(start), int(end)
+                return [f"{street} {i}" for i in range(start, end + 1)]
+            elif letter_match:
+                street, number, start_letter, end_letter = letter_match.groups()
+                start_idx = ord(start_letter) - ord("A")
+                end_idx = ord(end_letter) - ord("A")
+                return [
+                    f"{street} {number} {chr(i + ord('A'))}"
+                    for i in range(start_idx, end_idx + 1)
+                ]
+            elif single_match:
+                street, number, letter = single_match.groups()
+                address = f"{street} {number}"
+                if letter:
+                    address += f" {letter}"
+                return [address]
+            return []
+
+        # Expand addresses
+        df_expanded = (
+            df.with_columns(
+                pl.col(address_col).map_elements(
+                    expand_address_range, return_dtype=pl.List(pl.Utf8)
+                )
+            )
+            .explode(address_col)
+            .filter(pl.col(address_col).is_not_null())
+            .unique(subset=[address_col])
+            .sort(address_col)
+        )
+
+        def search_ratsit_for_person(address, max_retries=3):
+            """
+            Searches Ratsit API for persons associated with a given address across all pages.
+
+            Args:
+                address (str): The address to search for.
+
+            Returns:
+                tuple: (list of person dicts, status message).
+            """
+            if not address or not address.strip():
+                return [], "Empty or invalid address"
+
+            all_persons_data = []
+            current_page = 1
+            page_count = 1
+            status_message = "Success"
+
+            full_address = f"{address}{append_city}"
+
+            while current_page <= page_count:
+                payload = {
+                    "who": full_address,
+                    "age": ["16", "120"],
+                    "phoneticSearch": True,
+                    "companyName": "",
+                    "orgNr": "",
+                    "firstName": "",
+                    "lastName": "",
+                    "personNumber": "",
+                    "phone": "",
+                    "address": "",
+                    "postnr": "",
+                    "postort": "",
+                    "page": current_page,
+                    "url": f"/sok/person?vem={urllib.parse.quote(full_address)}&m=0&k=0&r=0&er=0&b=0&eb=0&amin=16&amax=120&fon=1&page={current_page}",
+                }
+
+                for attempt in range(max_retries):
+                    try:
+                        response = requests.post(
+                            api_url, headers=BASE_HEADERS, json=payload, timeout=15
+                        )
+                        response.raise_for_status()
+                        data = response.json()
+
+                        person_data = data.get("person", {})
+                        pager_data = person_data.get("pager", {})
+
+                        if current_page == 1:
+                            page_count = pager_data.get("pageCount", 1)
+                            total_hits_found = person_data.get("totalHits", 0)
+
+                        persons_on_page = person_data.get("hits", [])
+                        all_persons_data.extend(persons_on_page)
+
+                        print(
+                            f"  Fetched page {current_page}/{page_count} for {full_address}. "
+                            f"Found {len(persons_on_page)} individuals on this page. "
+                            f"Total collected: {len(all_persons_data)}."
+                        )
+
+                        break  # Success, exit retry loop
+
+                    except requests.exceptions.RequestException as e:
+                        if attempt < max_retries - 1:
+                            time.sleep(2)
+                            continue
+                        status_message = f"Request failed for page {current_page} of address '{full_address}': {e}"
+                        print(status_message)
+                        return all_persons_data, status_message
+
+                    except json.JSONDecodeError:
+                        status_message = f"JSON decode error for page {current_page} of address '{full_address}'."
+                        print(status_message)
+                        return all_persons_data, status_message
+
+                    except KeyError as e:
+                        status_message = f"Key error parsing JSON for page {current_page} of address '{full_address}': {e}"
+                        print(status_message)
+                        return all_persons_data, status_message
+
+                current_page += 1
+                if current_page <= page_count:
+                    page_delay = random.uniform(min_sleep_seconds, max_sleep_seconds)
+                    print(
+                        f"  Waiting {page_delay:.2f} seconds before fetching next page..."
+                    )
+                    time.sleep(page_delay)
+
+            if not all_persons_data and status_message == "Success":
+                status_message = f"No persons found at address '{full_address}'"
+                print(status_message)
+
+            return all_persons_data, status_message
+
+        # Process addresses
+        addresses = df_expanded[address_col].unique().to_list()
+        final_rows = []
+
+        for i, address in enumerate(addresses):
+            if i % batch_size == 0 and i > 0:
+                print(
+                    f"Processed batch {i // batch_size}/{len(addresses) // batch_size + 1}"
+                )
+
+            # Filter original rows for this address
+            original_rows = df.filter(pl.col(address_col) == address)
+            if original_rows.is_empty():
+                original_rows = df_expanded.filter(pl.col(address_col) == address)
+
+            persons, status = search_ratsit_for_person(address)
+
+            if persons:
+                for person in persons:
+                    row = original_rows.to_dicts()[0].copy()
+                    row["Förnamn"] = f"{person.get('firstName', '')}".strip()
+                    row["Efternamn"] = f"{person.get('lastName', '')}".strip()
+                    row["Namn"] = (
+                        f"{person.get('firstName', '')} {person.get('lastName', '')}".strip()
+                    )
+                    row["Ålder"] = str(person.get("age", "N/A"))
+                    row["StreetAddress"] = f"{person.get('streetAddress', '')}".strip()
+                    final_rows.append(row)
+            else:
+                row = original_rows.to_dicts()[0].copy()
+                row["Förnamn"] = "No persons found"
+                row["Efternamn"] = "No persons found"
+                row["Namn"] = "No persons found"
+                row["Ålder"] = "N/A"
+                row["StreetAddress"] = "No persons found"
+                row["Status"] = status
+                final_rows.append(row)
+
+            if i < len(addresses) - 1:
+                sleep_duration = random.uniform(min_sleep_seconds, max_sleep_seconds)
+                print(f"Waiting {sleep_duration:.2f} seconds before next address...")
+                time.sleep(sleep_duration)
+
+        # Create final DataFrame
+        if final_rows:
+            df_final = pl.DataFrame(final_rows)
+        else:
+            print("No data collected. Creating an empty DataFrame.")
+            schema = {
+                **{col: pl.String for col in df.columns},
+                **{col: pl.String for col in output_columns},
+                "Status": pl.String,
+            }
+            df_final = pl.DataFrame({}, schema=schema)
+
+        # Ensure column order
+        strict_final_order = (
+            output_columns
+            + [col for col in df.columns if col != address_col]
+            + [address_col]
+        )
+        if "Status" not in strict_final_order:
+            strict_final_order.append("Status")
+        existing_cols = [col for col in strict_final_order if col in df_final.columns]
+        other_cols = [col for col in df_final.columns if col not in existing_cols]
+        final_selection_order = existing_cols + other_cols
+        df_final = df_final.select(final_selection_order)
+
+        # Save to Excel
+        df_final.write_excel(path)
+        print(
+            f"Ratsit enrichment complete. Added columns: {output_columns}. Saved to '{path}'."
+        )
+        return df_final
