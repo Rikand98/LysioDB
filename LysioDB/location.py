@@ -17,13 +17,13 @@ import random
 class Location:
     def __init__(self, database):
         """
-        Initialize the Geo class with a reference to the database.
+        Initialize the Location class with a reference to the database.
 
         Args:
             database: Instance of the Database class providing access to data and config.
         """
         self.database = database
-        print("Initialization of Geo object complete.")
+        print("Initialization of Location object complete.")
 
     def _cast_to_struct(self, df: pl.DataFrame, col: str) -> pl.DataFrame:
         """
