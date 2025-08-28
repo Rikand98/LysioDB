@@ -506,6 +506,7 @@ class Location:
             "Namn",
             "Ålder",
             "StreetAddress",
+            "City",
         ],
         api_url: str = "https://www.ratsit.se/api/search/combined",
         batch_size: int = 100,
@@ -722,6 +723,7 @@ class Location:
                     )
                     row["Ålder"] = str(person.get("age", "N/A"))
                     row["StreetAddress"] = f"{person.get('streetAddress', '')}".strip()
+                    row["City"] = f"{person.get('city', '')}".strip()
                     final_rows.append(row)
             else:
                 row = original_rows.to_dicts()[0].copy()
@@ -730,6 +732,7 @@ class Location:
                 row["Namn"] = "No persons found"
                 row["Ålder"] = "N/A"
                 row["StreetAddress"] = "No persons found"
+                row["City"] = "No persons found"
                 row["Status"] = status
                 final_rows.append(row)
 
