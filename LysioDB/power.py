@@ -29,22 +29,6 @@ class Power:
         self.min_index = None
         self.max_index = None
 
-    def tabel_min_max(
-        self, length: int, ppt_path: str, output_path: str = "output.pptx"
-    ):
-        """Generate a PowerPoint with highlighted min/max percentages in tables."""
-        print("\n--- Start generating PowerPoint ---")
-
-        prs = Presentation(ppt_path)
-
-        for slide in prs.slides:
-            for shape in slide.shapes:
-                if shape.has_table:
-                    self._process_table(shape.table, length)
-
-        prs.save(output_path)
-        print(f"Generated PowerPoint in {output_path}")
-
     def update_pptx(
         self,
         category,
