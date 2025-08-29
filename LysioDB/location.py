@@ -7,7 +7,6 @@ from typing import Optional, Tuple, Union
 import time
 from thefuzz import fuzz
 import os
-import re
 import requests
 import urllib.parse
 import json
