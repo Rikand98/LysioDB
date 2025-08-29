@@ -1,7 +1,7 @@
 import polars as pl
 import pyreadstat as pystat
 import matplotlib.pyplot as plt
-from typing import Dict, List, Any, Tuple, Optional
+from typing import Dict, List
 from wordcloud import WordCloud
 from xlsxwriter import Workbook
 import spacy

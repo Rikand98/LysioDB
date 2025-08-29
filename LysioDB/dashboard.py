@@ -1,11 +1,9 @@
-from LysioDB import database
 import polars as pl
 import plotly.graph_objects as go
-import plotly.io as pio
 import plotly.subplots as sp
 import os
 import copy
-from typing import List, Dict, Optional, Tuple, Union
+from typing import List, Dict, Optional, Union
 
 
 class Dashboard:

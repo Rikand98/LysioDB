@@ -1,14 +1,11 @@
 import os
 import pptx
 import re
-import numpy as np
 import polars as pl
 from typing import Dict, Tuple, List
-from pptx import Presentation
 from pptx.util import Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
-from pptx.enum.shapes import MSO_SHAPE_TYPE
 from pptx.enum.chart import XL_CHART_TYPE
 from pptx.chart.chart import Chart
 from pptx.chart.data import ChartData, XyChartData

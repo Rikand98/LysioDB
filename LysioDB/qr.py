@@ -4,12 +4,10 @@ from reportlab.pdfgen import canvas
 from reportlab.graphics.barcode.qr import QrCodeWidget
 from reportlab.graphics.shapes import Drawing
 from reportlab.graphics import renderPDF
-from reportlab.lib.utils import ImageReader
 from PyPDF2 import PdfReader, PdfWriter
 from typing import Optional, List, Tuple, Dict
 import os
 import tempfile
-import re
 
 
 class QR:
