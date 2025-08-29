@@ -327,7 +327,6 @@ class Location:
         df = df.with_columns(pl.col(distance_col).fill_null(0))
 
         self.database.df = df
-        print(df)
         print(
             f"Distance calculation complete. Added column: '{distance_col}' (meters)."
         )
@@ -532,45 +531,6 @@ class Location:
             "TE": "trailers",
         }
 
-        # Function to expand address ranges and letter suffixes
-        def expand_address_range(address):
-            range_match = re.match(r"(\D+)\s(\d+)\s*-\s*(\d+)", address)
-            letter_match = re.match(r"(\D+)\s(\d+)\s*([A-Z])\s*-\s*([A-Z])", address)
-            single_match = re.match(r"(\D+)\s(\d+)(?:\s*([A-Z]))?", address)
-
-            if range_match:
-                street, start, end = range_match.groups()
-                start, end = int(start), int(end)
-                return [f"{street} {i}" for i in range(start, end + 1)]
-            elif letter_match:
-                street, number, start_letter, end_letter = letter_match.groups()
-                start_idx = ord(start_letter) - ord("A")
-                end_idx = ord(end_letter) - ord("A")
-                return [
-                    f"{street} {number} {chr(i + ord('A'))}"
-                    for i in range(start_idx, end_idx + 1)
-                ]
-            elif single_match:
-                street, number, letter = single_match.groups()
-                address = f"{street} {number}"
-                if letter:
-                    address += f" {letter}"
-                return [address]
-            return []
-
-        # Expand addresses
-        df_expanded = (
-            df.with_columns(
-                pl.col(address_col).map_elements(
-                    expand_address_range, return_dtype=pl.List(pl.Utf8)
-                )
-            )
-            .explode(address_col)
-            .filter(pl.col(address_col).is_not_null())
-            .unique(subset=[address_col])
-            .sort(address_col)
-        )
-
         def search_ratsit_for_person(address, max_retries=3):
             """
             Searches Ratsit API for persons associated with a given address across all pages.
@@ -668,7 +628,7 @@ class Location:
             return all_persons_data, status_message
 
         # Process addresses
-        addresses = df_expanded[address_col].unique().to_list()
+        addresses = df[address_col].unique().to_list()
         final_rows = []
 
         for i, address in enumerate(addresses):
@@ -680,7 +640,7 @@ class Location:
             # Filter original rows for this address
             original_rows = df.filter(pl.col(address_col) == address)
             if original_rows.is_empty():
-                original_rows = df_expanded.filter(pl.col(address_col) == address)
+                original_rows = df.filter(pl.col(address_col) == address)
 
             persons, status = search_ratsit_for_person(address)
 
@@ -723,19 +683,6 @@ class Location:
                 "Status": pl.String,
             }
             df_final = pl.DataFrame({}, schema=schema)
-
-        # # Ensure column order
-        # strict_final_order = (
-        #     output_columns
-        #     + [col for col in df.columns if col != address_col]
-        #     + [address_col]
-        # )
-        # if "Status" not in strict_final_order:
-        #     strict_final_order.append("Status")
-        # existing_cols = [col for col in strict_final_order if col in df_final.columns]
-        # other_cols = [col for col in df_final.columns if col not in existing_cols]
-        # final_selection_order = existing_cols + other_cols
-        # df_final = df_final.select(final_selection_order)
 
         # Save to Excel
         df_final.write_excel(path)
