@@ -336,6 +336,7 @@ class Location:
     def get_postnummer(
         database_path: str,
         address_col: str = "adress",
+        city_col: str = "city",
         postnummer_col: str = "postnummer",
         geocoder: str = "photon",
         user_agent: str = "LysioDB_Geocoding",
@@ -343,17 +344,17 @@ class Location:
         batch_size: int = 100,
         max_retries: int = 3,
         sleep_seconds: float = 0.2,
-        append_city: str = ", Lund, Sweden",
         fallback_postnummer: str = "223 50",
         path: str = "processed_addresses_with_postnummer.xlsx",
     ) -> pl.DataFrame:
         """
-        Processes addresses from an Excel file, expands ranges and letter suffixes, and retrieves postnummer
-        using TomTom or Photon geocoding services, adding a postnummer column.
+        Retrieves postnummer for addresses in an Excel file using TomTom or Photon geocoding services,
+        adding a postnummer column. Uses address and city columns directly without expansion.
 
         Args:
             database_path (str): Path to the Excel file containing addresses.
             address_col (str): Column name containing addresses (e.g., 'adress').
+            city_col (str): Column name containing city names (e.g., 'city').
             postnummer_col (str): Name for the new postnummer column (string).
             geocoder (str): Geocoder to use ('tomtom' or 'photon').
             user_agent (str): Identifier for Photon API.
@@ -361,7 +362,6 @@ class Location:
             batch_size (int): Number of addresses to process before logging.
             max_retries (int): Max retries for failed requests.
             sleep_seconds (float): Delay between requests (0.2 for TomTom, 1.0 for Photon).
-            append_city (str): String to append to addresses for better geocoding accuracy.
             fallback_postnummer (str): Fallback postnummer for failed lookups.
             path (str): Path to save the output Excel file.
 
@@ -377,45 +377,8 @@ class Location:
 
         if address_col not in df.columns:
             raise ValueError(f"Address column '{address_col}' not found in DataFrame.")
-
-        # Function to expand address ranges and letter suffixes
-        def expand_address_range(address):
-            range_match = re.match(r"(\D+)\s(\d+)\s*-\s*(\d+)", address)
-            letter_match = re.match(r"(\D+)\s(\d+)\s*([A-Z])\s*-\s*([A-Z])", address)
-            single_match = re.match(r"(\D+)\s(\d+)(?:\s*([A-Z]))?", address)
-
-            if range_match:
-                street, start, end = range_match.groups()
-                start, end = int(start), int(end)
-                return [f"{street} {i}" for i in range(start, end + 1)]
-            elif letter_match:
-                street, number, start_letter, end_letter = letter_match.groups()
-                start_idx = ord(start_letter) - ord("A")
-                end_idx = ord(end_letter) - ord("A")
-                return [
-                    f"{street} {number} {chr(i + ord('A'))}"
-                    for i in range(start_idx, end_idx + 1)
-                ]
-            elif single_match:
-                street, number, letter = single_match.groups()
-                address = f"{street} {number}"
-                if letter:
-                    address += f" {letter}"
-                return [address]
-            return []
-
-        # Expand addresses
-        df_expanded = (
-            df.with_columns(
-                pl.col(address_col).map_elements(
-                    expand_address_range, return_dtype=pl.List(pl.Utf8)
-                )
-            )
-            .explode(address_col)
-            .filter(pl.col(address_col).is_not_null())
-            .unique(subset=[address_col])
-            .sort(address_col)
-        )
+        if city_col not in df.columns:
+            raise ValueError(f"City column '{city_col}' not found in DataFrame.")
 
         # Initialize geocoder
         if geocoder == "tomtom":
@@ -434,10 +397,14 @@ class Location:
                 f"Unsupported geocoder: {geocoder}. Choose 'tomtom' or 'photon'."
             )
 
-        def get_postnummer_single(address, retries=max_retries):
+        def get_postnummer_single(row, retries=max_retries):
+            address = row[address_col]
+            city = row[city_col]
             try:
                 full_address = (
-                    f"{address}{append_city}" if address and address.strip() else ""
+                    f"{address}, {city}, Sverige"
+                    if address and city and address.strip() and city.strip()
+                    else ""
                 )
                 if not full_address:
                     return None
@@ -451,14 +418,14 @@ class Location:
             except (GeocoderTimedOut, GeocoderUnavailable) as e:
                 if retries > 0:
                     time.sleep(sleep_seconds * 2)
-                    return get_postnummer_single(address, retries - 1)
+                    return get_postnummer_single(row, retries - 1)
                 print(
-                    f"Failed to retrieve postnummer for '{address}' after retries: {e}"
+                    f"Failed to retrieve postnummer for '{full_address}' after retries: {e}"
                 )
                 return None
 
         # Check API limits
-        addresses = df_expanded[address_col].unique().to_list()
+        addresses = df.select([address_col, city_col]).unique().to_dicts()
         if geocoder == "tomtom" and len(addresses) > 2500:
             print(
                 f"Warning: {len(addresses)} addresses exceed TomTom free tier (2,500/day)."
@@ -469,33 +436,37 @@ class Location:
             )
 
         # Batch process addresses
-        postnummer_results = {addr: None for addr in addresses}
+        postnummer_results = {
+            (row[address_col], row[city_col]): None for row in addresses
+        }
         for i in range(0, len(addresses), batch_size):
             batch = addresses[i : i + batch_size]
-            for addr in batch:
-                postnummer = get_postnummer_single(addr)
-                postnummer_results[addr] = postnummer
+            for row in batch:
+                postnummer = get_postnummer_single(row)
+                postnummer_results[(row[address_col], row[city_col])] = postnummer
                 time.sleep(sleep_seconds)
             print(
                 f"Processed batch {i // batch_size + 1}/{len(addresses) // batch_size + 1}"
             )
 
         # Add postnummer column
-        df_expanded = df_expanded.with_columns(
-            pl.col(address_col)
+        df = df.with_columns(
+            pl.struct([address_col, city_col])
             .map_elements(
-                lambda x: postnummer_results.get(x, fallback_postnummer),
+                lambda x: postnummer_results.get(
+                    (x[address_col], x[city_col]), fallback_postnummer
+                ),
                 return_dtype=pl.Utf8,
             )
             .alias(postnummer_col)
         )
 
         # Save to Excel
-        df_expanded.write_excel(path)
+        df.write_excel(path)
         print(
             f"Postnummer retrieval complete. Added column: '{postnummer_col}' (string). Saved to '{path}'."
         )
-        return df_expanded
+        return df
 
     def ratsit_adresses(
         database_path: str,
@@ -753,18 +724,18 @@ class Location:
             }
             df_final = pl.DataFrame({}, schema=schema)
 
-        # Ensure column order
-        strict_final_order = (
-            output_columns
-            + [col for col in df.columns if col != address_col]
-            + [address_col]
-        )
-        if "Status" not in strict_final_order:
-            strict_final_order.append("Status")
-        existing_cols = [col for col in strict_final_order if col in df_final.columns]
-        other_cols = [col for col in df_final.columns if col not in existing_cols]
-        final_selection_order = existing_cols + other_cols
-        df_final = df_final.select(final_selection_order)
+        # # Ensure column order
+        # strict_final_order = (
+        #     output_columns
+        #     + [col for col in df.columns if col != address_col]
+        #     + [address_col]
+        # )
+        # if "Status" not in strict_final_order:
+        #     strict_final_order.append("Status")
+        # existing_cols = [col for col in strict_final_order if col in df_final.columns]
+        # other_cols = [col for col in df_final.columns if col not in existing_cols]
+        # final_selection_order = existing_cols + other_cols
+        # df_final = df_final.select(final_selection_order)
 
         # Save to Excel
         df_final.write_excel(path)
